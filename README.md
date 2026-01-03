@@ -1,16 +1,22 @@
 # pmp-deploy
 
+> ⚠️ **WORK IN PROGRESS** - This project is under active development. APIs and configurations may change. Use in production at your own risk.
+
 A Rust CLI tool for simplified multi-infrastructure application deployments.
 
 ## Features
 
 - **Multi-Infrastructure Support**: Deploy to AWS EKS, AWS ECS, AWS Lambda, Kubernetes, and Docker Compose
 - **Helm & Kustomize**: Native support for Helm charts and Kustomize overlays
-- **Multiple Deployment Strategies**: Rolling Update, Blue/Green, Recreate, and Direct
+- **Deployment Strategies**: Rolling Update and All-In deployment modes
 - **Configuration-Driven**: Define infrastructure and environments in a single YAML file
 - **Multi-Project Management**: Manage multiple projects from a global configuration
-- **Web UI**: Browser-based interface for deployments with HTTPS support
-- **Plugin System**: Extend with custom infrastructure providers
+- **Web UI**: Browser-based interface for deployments with HTTPS support and real-time metrics
+- **Metrics Observation**: Monitor deployments with CloudWatch and Prometheus integration
+- **Deployment Hooks**: Pre/post deployment hooks via containers, HTTP webhooks, ECS tasks, K8s Jobs, or Lambda
+- **Deployment History**: Persist deployment records with SQLite, file-based, or in-memory storage
+- **Secrets Management**: Integrate with environment variables, AWS Secrets Manager, and HashiCorp Vault
+- **Plugin System**: Extend with custom infrastructure providers via native shared libraries
 - **Production Ready**: Retry logic, graceful shutdown, structured logging, credential masking
 
 ## Installation
@@ -85,10 +91,14 @@ pmp-deploy deploy development
 | `pmp-deploy status <env>` | Check deployment status |
 | `pmp-deploy rollback <env>` | Rollback to previous version |
 | `pmp-deploy logs <env>` | Stream or fetch logs |
+| `pmp-deploy hooks list <env>` | List configured hooks for an environment |
+| `pmp-deploy hooks run <env> [hook]` | Run specific or all hooks |
 | `pmp-deploy list` | List available environments |
 | `pmp-deploy validate` | Validate configuration file |
 | `pmp-deploy init` | Initialize a new configuration file |
 | `pmp-deploy projects list` | List all configured projects |
+| `pmp-deploy projects add` | Add a project to global configuration |
+| `pmp-deploy projects remove` | Remove a project from global configuration |
 | `pmp-deploy ui` | Start the web UI server |
 
 ## Global Flags
@@ -108,6 +118,9 @@ pmp-deploy deploy development
 | `-y, --yes` | Skip confirmation prompt |
 | `--image <image>` | Override the image to deploy |
 | `--deploy-mode <mode>` | Deploy mode: `app-only` (default) or `full` |
+| `--skip-hooks` | Skip all pre and post deployment hooks |
+| `--skip-pre-hooks` | Skip pre-deployment hooks only |
+| `--skip-post-hooks` | Skip post-deployment hooks only |
 
 ### Deploy Modes
 

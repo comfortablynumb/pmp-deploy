@@ -1,0 +1,13 @@
+[package]
+name = "pmp-deploy-echo-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Example echo plugin for pmp-deploy"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pmp-deploy-plugin-sdk = { path = "../../../crates/pmp-deploy-plugin-sdk" }
+serde_json = "1"

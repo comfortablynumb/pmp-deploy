@@ -1,0 +1,83 @@
+# AWS Lambda - Full Deployment Example
+# This configuration demonstrates full Lambda provisioning including
+# function creation, memory/timeout settings, VPC, and layers.
+
+infrastructure:
+  lambda-api:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      function_name: myapp-api-v2
+
+      # Full provisioning configuration
+      provisioning:
+        # Runtime configuration
+        runtime: provided.al2023
+        architecture: arm64
+        handler: bootstrap
+        memory_mb: 1024
+        timeout_seconds: 30
+
+        # VPC configuration (for database access)
+        vpc:
+          subnet_ids:
+            - subnet-11111111
+            - subnet-22222222
+          security_group_ids:
+            - sg-12345678
+
+        # Lambda layers
+        layers:
+          - arn:aws:lambda:us-east-1:123456789012:layer:common-libs:5
+
+        # Dead letter queue
+        dead_letter:
+          target_arn: arn:aws:sqs:us-east-1:123456789012:myapp-dlq
+
+        # Concurrency settings
+        reserved_concurrent_executions: 100
+
+        # Provisioned concurrency for production
+        provisioned_concurrency: 5
+
+        # IAM role
+        role_arn: arn:aws:iam::123456789012:role/myapp-lambda-role
+
+  lambda-worker:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      function_name: myapp-worker-v2
+      provisioning:
+        runtime: provided.al2023
+        architecture: arm64
+        handler: bootstrap
+        memory_mb: 2048
+        timeout_seconds: 300
+        reserved_concurrent_executions: 50
+        role_arn: arn:aws:iam::123456789012:role/myapp-lambda-role
+
+environments:
+  # API function - full deployment for new versions
+  api-production:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-api:v2.0.0
+    env:
+      ENVIRONMENT: production
+      LOG_LEVEL: warn
+      DATABASE_SECRET_ARN: arn:aws:secretsmanager:us-east-1:123456789012:secret:myapp/db
+
+  # Worker function - full deployment
+  worker-production:
+    infrastructure: lambda-worker
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-worker:v2.0.0
+    env:
+      ENVIRONMENT: production
+      QUEUE_URL: https://sqs.us-east-1.amazonaws.com/123456789012/myapp-queue
+      BATCH_SIZE: "10"

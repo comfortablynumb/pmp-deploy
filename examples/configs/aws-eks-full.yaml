@@ -1,0 +1,77 @@
+# AWS EKS - Full Deployment Example
+# This configuration demonstrates full deployment including
+# Helm charts with complete resource definitions.
+
+infrastructure:
+  eks-production:
+    type: aws-eks
+    config:
+      cluster_name: myapp-eks-production
+      region: us-east-1
+      namespace: production
+      service_account: myapp-sa
+
+      # Use Helm for full deployments
+      deployment_method: helm
+      helm:
+        chart: ./charts/myapp
+        release_name: myapp-production
+        values_files:
+          - ./charts/myapp/values-production.yaml
+        set:
+          image.tag: "${IMAGE_TAG}"
+          replicaCount: "5"
+          resources.requests.cpu: "500m"
+          resources.requests.memory: "512Mi"
+          resources.limits.cpu: "1000m"
+          resources.limits.memory: "1Gi"
+        wait: true
+        atomic: true
+        timeout: "10m"
+
+environments:
+  # Production - all-in for major releases with Helm
+  production:
+    infrastructure: eks-production
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+      helm:
+        set:
+          autoscaling.enabled: "true"
+          autoscaling.minReplicas: "3"
+          autoscaling.maxReplicas: "10"
+          ingress.enabled: "true"
+          ingress.hosts[0].host: "api.myapp.com"
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v2.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  # Staging - full deployment for testing Helm changes
+  staging:
+    infrastructure: eks-production
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+      helm:
+        release_name: myapp-staging
+        values_files:
+          - ./charts/myapp/values-staging.yaml
+        set:
+          autoscaling.enabled: "false"
+          replicaCount: "2"
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug

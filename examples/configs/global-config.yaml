@@ -1,0 +1,33 @@
+# Global Configuration Example
+# Place this file at: ~/.pmp-deploy.yaml
+# Use to manage multiple projects from a single location
+
+projects:
+  # API service
+  - path: ~/projects/myapp-api
+    name: api-service
+
+  # Web frontend
+  - path: ~/projects/myapp-web
+    name: web-frontend
+
+  # Background workers
+  - path: ~/projects/myapp-workers
+    name: workers
+
+  # Infrastructure as code
+  - path: ~/projects/myapp-infra
+    name: infrastructure
+
+  # Path with environment variable
+  - path: $WORKSPACE/microservice-a
+    name: microservice-a
+
+  # Absolute path
+  - path: /opt/services/shared-lib
+    name: shared-library
+
+# Default settings (applied to all projects unless overridden)
+defaults:
+  deployment_type: rolling-update
+  rollback_on_failure: true

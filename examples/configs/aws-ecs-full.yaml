@@ -1,0 +1,84 @@
+# AWS ECS - Full Deployment Example
+# This configuration demonstrates full infrastructure provisioning,
+# including ALB, auto-scaling, CloudWatch, and service creation.
+
+infrastructure:
+  ecs-production:
+    type: aws-ecs
+    config:
+      cluster: myapp-production
+      region: us-east-1
+      launch_type: FARGATE
+
+      # VPC configuration
+      vpc_id: vpc-12345678
+      subnets:
+        - subnet-11111111
+        - subnet-22222222
+      security_groups:
+        - sg-12345678
+      assign_public_ip: true
+
+      # Load balancer configuration
+      load_balancer:
+        enabled: true
+        target_group_arn: arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/myapp/1234567890123456
+        container_port: 8080
+        health_check:
+          path: /health
+          interval: 30
+          timeout: 5
+          healthy_threshold: 2
+          unhealthy_threshold: 3
+
+      # CloudWatch logging
+      cloudwatch_logs:
+        log_group: /ecs/myapp-production
+        log_stream_prefix: myapp
+        retention_days: 30
+        create_log_group: true
+
+      # Auto-scaling configuration
+      auto_scaling:
+        enabled: true
+        min_capacity: 2
+        max_capacity: 10
+        target_tracking:
+          target_value: 70.0
+          metric_type: ECSServiceAverageCPUUtilization
+          scale_in_cooldown: 300
+          scale_out_cooldown: 60
+
+environments:
+  # Production - full deployment with all-in strategy for major releases
+  production:
+    infrastructure: ecs-production
+    deployment_type: all-in
+    # Full mode provisions/updates infrastructure
+    config:
+      deploy_mode: full
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v2.0.0
+    replicas: 4
+    resources:
+      cpu: "512"
+      memory: "1024"
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+      PORT: "8080"
+
+  # Staging - full deployment for testing infrastructure changes
+  staging:
+    infrastructure: ecs-production
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "256"
+      memory: "512"
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug
+      PORT: "8080"

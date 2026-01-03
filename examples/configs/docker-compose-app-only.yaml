@@ -1,0 +1,49 @@
+# Docker Compose - App-Only Deployment Example
+# This configuration demonstrates deploying container updates
+# to an existing Docker Compose environment.
+
+infrastructure:
+  compose-local:
+    type: docker-compose
+    config:
+      compose_file: ./docker-compose.yaml
+      project_name: myapp
+
+  compose-dev:
+    type: docker-compose
+    config:
+      compose_file: ./docker-compose.dev.yaml
+      project_name: myapp-dev
+
+environments:
+  # Local development environment
+  local:
+    infrastructure: compose-local
+    deployment_type: all-in
+    image: myapp:local
+    env:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://postgres:postgres@db:5432/myapp
+
+  # Dev environment - app updates only
+  dev:
+    infrastructure: compose-dev
+    deployment_type: all-in
+    image: registry.example.com/myapp:dev
+    env:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://postgres:postgres@db:5432/myapp_dev
+      REDIS_URL: redis://redis:6379
+
+  # Integration testing environment
+  integration:
+    infrastructure: compose-local
+    deployment_type: all-in
+    image: registry.example.com/myapp:integration
+    env:
+      NODE_ENV: test
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://postgres:postgres@db:5432/myapp_test
+      MOCK_EXTERNAL_SERVICES: "true"

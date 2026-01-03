@@ -1,0 +1,107 @@
+# Example: Kubernetes deployment using Kustomize overlays
+# This configuration demonstrates how to deploy applications using Kustomize
+
+infrastructure:
+  # Kubernetes cluster with Kustomize support
+  k8s-with-kustomize:
+    type: kubernetes
+    config:
+      context: my-cluster-context
+      namespace: default
+      # Kustomize configuration at infrastructure level
+      kustomize:
+        path: ./k8s/base              # Base kustomization path
+
+environments:
+  # Development environment - uses development overlay
+  development:
+    infrastructure: k8s-with-kustomize
+    image: my-app:dev
+    config:
+      kustomize:
+        path: ./k8s/overlays/development
+        images:
+          - name: my-app
+            new_tag: dev
+        replicas:
+          - name: my-app-deployment
+            count: 1
+        labels:
+          environment: development
+          team: backend
+
+  # Staging environment - staging overlay with more replicas
+  staging:
+    infrastructure: k8s-with-kustomize
+    image: my-app:staging
+    config:
+      kustomize:
+        path: ./k8s/overlays/staging
+        images:
+          - name: my-app
+            new_tag: staging
+          - name: sidecar
+            new_name: my-registry/sidecar
+            new_tag: "1.0.0"
+        replicas:
+          - name: my-app-deployment
+            count: 3
+        labels:
+          environment: staging
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+
+  # Production environment - production overlay with full config
+  production:
+    infrastructure: k8s-with-kustomize
+    image: my-app:v1.2.3
+    deployment_type: rolling-update
+    config:
+      kustomize:
+        path: ./k8s/overlays/production
+        images:
+          - name: my-app
+            new_name: prod-registry.example.com/my-app
+            new_tag: v1.2.3
+        replicas:
+          - name: my-app-deployment
+            count: 10
+        namespace: production
+        name_prefix: prod-
+        labels:
+          environment: production
+          tier: frontend
+        annotations:
+          deployment.kubernetes.io/revision: "42"
+        prune: true
+        prune_whitelist:
+          - core/v1/ConfigMap
+          - core/v1/Secret
+
+# Example directory structure for Kustomize:
+#
+# k8s/
+# ├── base/
+# │   ├── kustomization.yaml
+# │   ├── deployment.yaml
+# │   ├── service.yaml
+# │   └── configmap.yaml
+# └── overlays/
+#     ├── development/
+#     │   ├── kustomization.yaml
+#     │   └── patches/
+#     │       └── deployment-patch.yaml
+#     ├── staging/
+#     │   ├── kustomization.yaml
+#     │   ├── namespace.yaml
+#     │   └── patches/
+#     │       ├── deployment-patch.yaml
+#     │       └── hpa.yaml
+#     └── production/
+#         ├── kustomization.yaml
+#         ├── namespace.yaml
+#         └── patches/
+#             ├── deployment-patch.yaml
+#             ├── hpa.yaml
+#             └── pdb.yaml

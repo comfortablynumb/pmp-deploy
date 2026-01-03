@@ -1,0 +1,62 @@
+# AWS Lambda - App-Only Deployment Example
+# This configuration demonstrates deploying Lambda function code updates
+# without modifying function configuration (memory, timeout, etc.)
+
+infrastructure:
+  lambda-api:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      # Function is already provisioned with these settings
+      function_name: myapp-api
+
+  lambda-worker:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      function_name: myapp-worker
+
+  lambda-scheduler:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      function_name: myapp-scheduler
+
+environments:
+  # API function - staging
+  api-staging:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-api:staging
+    env:
+      ENVIRONMENT: staging
+      LOG_LEVEL: debug
+      API_BASE_URL: https://api-staging.myapp.com
+
+  # API function - production
+  api-production:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-api:v1.0.0
+    env:
+      ENVIRONMENT: production
+      LOG_LEVEL: warn
+      API_BASE_URL: https://api.myapp.com
+
+  # Worker function - production
+  worker-production:
+    infrastructure: lambda-worker
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-worker:v1.0.0
+    env:
+      ENVIRONMENT: production
+      QUEUE_URL: https://sqs.us-east-1.amazonaws.com/123456789012/myapp-queue
+
+  # Scheduler function - production
+  scheduler-production:
+    infrastructure: lambda-scheduler
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-scheduler:v1.0.0
+    env:
+      ENVIRONMENT: production
+      SCHEDULE_TIMEZONE: America/New_York

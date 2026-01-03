@@ -1,0 +1,111 @@
+# Complete Example: Multi-infrastructure deployment
+# Demonstrates all features of pmp-deploy
+
+infrastructure:
+  # Local development
+  local:
+    type: docker-compose
+    config:
+      compose_file: docker-compose.dev.yml
+      project_name: myapp
+
+  # AWS EKS for staging/production
+  eks-staging:
+    type: aws-eks
+    config:
+      cluster_name: myapp-staging
+      region: us-east-1
+      namespace: myapp
+      service_account: myapp-deployer
+
+  eks-production:
+    type: aws-eks
+    config:
+      cluster_name: myapp-production
+      region: us-east-1
+      namespace: myapp
+      service_account: myapp-deployer
+
+  # Lambda for background workers
+  lambda-workers:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      runtime: provided.al2
+
+environments:
+  # Local development - fast iteration
+  development:
+    infrastructure: local
+    deployment_type: all-in
+    image: myapp:dev
+    env:
+      NODE_ENV: development
+      DEBUG: "true"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/myapp_dev
+      REDIS_URL: redis://localhost:6379
+
+  # Staging - mirrors production
+  staging:
+    infrastructure: eks-staging
+    deployment_type: rolling-update
+    image: myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+      cpu_limit: "500m"
+      memory_limit: "512Mi"
+    config:
+      batch_size: 50
+      health_check_timeout_secs: 120
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug
+
+  # Production - with rolling update
+  production:
+    infrastructure: eks-production
+    deployment_type: rolling-update
+    image: myapp:v1.0.0
+    replicas: 10
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    config:
+      batch_size: 25
+      health_check_timeout_secs: 300
+      rollback_on_failure: true
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  # Lambda worker - production
+  worker-production:
+    infrastructure: lambda-workers
+    deployment_type: all-in
+    image: myapp-worker:v1.0.0
+    config:
+      function_name: myapp-worker
+      memory_mb: 512
+      timeout_seconds: 300
+    env:
+      NODE_ENV: production
+      QUEUE_URL: https://sqs.us-east-1.amazonaws.com/123456789012/myapp-queue
+
+# Secrets management
+secrets:
+  provider: aws-secrets-manager
+  secrets:
+    database_url:
+      key: myapp/production/database_url
+    redis_url:
+      key: myapp/production/redis_url
+    api_key:
+      key: myapp/production/api_key
+    jwt_secret:
+      provider: hashicorp-vault
+      key: secret/data/myapp/jwt_secret
+      version: "2"

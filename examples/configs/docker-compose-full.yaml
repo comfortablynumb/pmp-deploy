@@ -1,0 +1,56 @@
+# Docker Compose - Full Deployment Example
+# This configuration demonstrates full Docker Compose deployment
+# including service definitions, volumes, and networks.
+
+infrastructure:
+  compose-production:
+    type: docker-compose
+    config:
+      compose_file: ./docker-compose.prod.yaml
+      project_name: myapp-prod
+
+      # Full provisioning with additional compose files
+      additional_files:
+        - ./docker-compose.override.yaml
+        - ./docker-compose.monitoring.yaml
+
+  compose-staging:
+    type: docker-compose
+    config:
+      compose_file: ./docker-compose.staging.yaml
+      project_name: myapp-staging
+
+environments:
+  # Production - full deployment with all services
+  production:
+    infrastructure: compose-production
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+      # Pull latest images before deployment
+      pull_images: true
+      # Remove orphan containers
+      remove_orphans: true
+    image: registry.example.com/myapp:v1.0.0
+    replicas: 3
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+      DATABASE_URL: postgres://myapp:${DB_PASSWORD}@db:5432/myapp_prod
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SECRET_KEY: ${SECRET_KEY}
+
+  # Staging - full deployment for testing
+  staging:
+    infrastructure: compose-staging
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+      pull_images: true
+    image: registry.example.com/myapp:staging
+    replicas: 2
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://myapp:staging@db:5432/myapp_staging
+      REDIS_URL: redis://redis:6379

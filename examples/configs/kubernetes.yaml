@@ -1,0 +1,39 @@
+# Example: Kubernetes deployment
+# Use for self-hosted Kubernetes clusters
+
+infrastructure:
+  k8s-cluster:
+    type: kubernetes
+    config:
+      kubeconfig_path: ~/.kube/config
+      context: my-cluster-context
+      namespace: default
+
+environments:
+  staging:
+    infrastructure: k8s-cluster
+    deployment_type: rolling-update
+    image: myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+      cpu_limit: "500m"
+      memory_limit: "512Mi"
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: info
+
+  production:
+    infrastructure: k8s-cluster
+    deployment_type: rolling-update
+    image: myapp:v1.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn

@@ -1,0 +1,74 @@
+# AWS EKS - App-Only Deployment Example
+# This configuration demonstrates deploying application updates to EKS
+# without modifying cluster infrastructure.
+
+infrastructure:
+  eks-production:
+    type: aws-eks
+    config:
+      cluster_name: myapp-eks-production
+      region: us-east-1
+      namespace: production
+      service_account: myapp-sa
+
+  eks-staging:
+    type: aws-eks
+    config:
+      cluster_name: myapp-eks-staging
+      region: us-east-1
+      namespace: staging
+      service_account: myapp-sa
+
+environments:
+  # Staging - rolling update for safe deployments
+  staging:
+    infrastructure: eks-staging
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+      cpu_limit: "500m"
+      memory_limit: "512Mi"
+    config:
+      batch_size: 50
+      health_check_timeout_secs: 120
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug
+
+  # Production - rolling update with conservative batches
+  production:
+    infrastructure: eks-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    config:
+      batch_size: 20
+      health_check_timeout_secs: 300
+      rollback_on_failure: true
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  # Canary environment - small subset for testing
+  canary:
+    infrastructure: eks-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.1.0-rc1
+    replicas: 1
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+    config:
+      batch_size: 100
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CANARY: "true"

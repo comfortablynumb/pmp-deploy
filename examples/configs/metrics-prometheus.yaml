@@ -1,0 +1,124 @@
+# Prometheus Metrics Configuration Example
+# This configuration demonstrates monitoring Kubernetes infrastructure
+# using Prometheus metrics during deployments.
+
+infrastructure:
+  k8s-production:
+    type: kubernetes
+    config:
+      context: production-cluster
+      namespace: production
+      kubeconfig: ~/.kube/config
+
+environments:
+  production:
+    infrastructure: k8s-production
+    deployment_type: rolling-update
+    image: registry.example.com/myapp:v1.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+    env:
+      NODE_ENV: production
+
+# Metrics configuration for Prometheus
+metrics:
+  # Prometheus provider configuration
+  prometheus:
+    url: http://prometheus.monitoring.svc.cluster.local:9090
+    # Optional authentication
+    # username: prometheus
+    # password:
+    #   secret_ref: prometheus-password
+    timeout_seconds: 30
+
+  # Map infrastructure types to metrics providers
+  infrastructure_mapping:
+    kubernetes: prometheus
+
+  # Global thresholds
+  thresholds:
+    cpu_utilization:
+      warning: 70
+      critical: 85
+    memory_utilization:
+      warning: 75
+      critical: 90
+    error_rate:
+      warning: 0.5
+      critical: 2
+    request_latency:
+      warning: 200
+      critical: 1000
+    request_count:
+      warning: 5000
+      critical: 20000
+
+  # Custom Prometheus metrics using PromQL
+  custom_metrics:
+    - name: http-requests-per-second
+      display_name: "HTTP Requests/sec"
+      provider: prometheus
+      query: |
+        sum(rate(http_requests_total{namespace="production", app="myapp"}[5m]))
+      unit: req/s
+      thresholds:
+        warning: 1000
+        critical: 5000
+
+    - name: http-error-rate
+      display_name: "HTTP Error Rate"
+      provider: prometheus
+      query: |
+        sum(rate(http_requests_total{namespace="production", app="myapp", status=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{namespace="production", app="myapp"}[5m]))
+        * 100
+      unit: percent
+      thresholds:
+        warning: 1
+        critical: 5
+
+    - name: p99-latency
+      display_name: "P99 Latency"
+      provider: prometheus
+      query: |
+        histogram_quantile(0.99,
+          sum(rate(http_request_duration_seconds_bucket{namespace="production", app="myapp"}[5m])) by (le)
+        ) * 1000
+      unit: ms
+      thresholds:
+        warning: 500
+        critical: 2000
+
+    - name: pod-restart-rate
+      display_name: "Pod Restart Rate"
+      provider: prometheus
+      query: |
+        sum(increase(kube_pod_container_status_restarts_total{namespace="production", pod=~"myapp-.*"}[1h]))
+      unit: restarts/h
+      thresholds:
+        warning: 1
+        critical: 5
+
+    - name: memory-working-set
+      display_name: "Memory Working Set"
+      provider: prometheus
+      query: |
+        sum(container_memory_working_set_bytes{namespace="production", pod=~"myapp-.*", container!=""})
+        / 1024 / 1024
+      unit: MiB
+
+    - name: cpu-throttling
+      display_name: "CPU Throttling"
+      provider: prometheus
+      query: |
+        sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="production", pod=~"myapp-.*"}[5m]))
+        /
+        sum(rate(container_cpu_cfs_periods_total{namespace="production", pod=~"myapp-.*"}[5m]))
+        * 100
+      unit: percent
+      thresholds:
+        warning: 10
+        critical: 25

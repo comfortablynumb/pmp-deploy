@@ -1,0 +1,122 @@
+# Example: AWS ECS deployment with ALB, CloudWatch Logs, and Auto Scaling
+# This configuration demonstrates the full ECS feature set
+
+infrastructure:
+  # Basic ECS service
+  ecs-basic:
+    type: aws-ecs
+    config:
+      cluster: my-cluster
+      region: us-east-1
+      service_name: my-service
+
+  # ECS with Load Balancer integration
+  ecs-with-alb:
+    type: aws-ecs
+    config:
+      cluster: my-cluster
+      region: us-east-1
+      service_name: api-service
+      load_balancer:
+        target_group_arn: arn:aws:elasticloadbalancing:us-east-1:123456789:targetgroup/my-tg/abc123
+        container_name: app
+        container_port: 8080
+        health_check:
+          path: /api/health
+          interval_seconds: 15
+          timeout_seconds: 5
+          healthy_threshold: 2
+          unhealthy_threshold: 3
+          matcher: "200-299"
+
+  # ECS with CloudWatch Logs
+  ecs-with-logs:
+    type: aws-ecs
+    config:
+      cluster: my-cluster
+      region: us-east-1
+      service_name: worker-service
+      cloudwatch_logs:
+        log_group: /ecs/worker-service
+        log_stream_prefix: ecs/worker
+        retention_days: 14
+        create_log_group: true
+
+  # Full-featured ECS with all enhancements
+  ecs-production:
+    type: aws-ecs
+    config:
+      cluster: production-cluster
+      region: us-east-1
+      service_name: api-production
+      load_balancer:
+        target_group_arn: arn:aws:elasticloadbalancing:us-east-1:123456789:targetgroup/prod-api/xyz789
+        container_name: api
+        container_port: 8080
+        health_check:
+          path: /health
+          interval_seconds: 10
+          timeout_seconds: 3
+      cloudwatch_logs:
+        log_group: /ecs/production/api
+        retention_days: 30
+        create_log_group: true
+      autoscaling:
+        enabled: true
+        min_capacity: 2
+        max_capacity: 50
+        target_tracking:
+          target_value: 70.0
+          metric_type: ECSServiceAverageCPUUtilization
+          scale_in_cooldown: 300
+          scale_out_cooldown: 60
+        scheduled:
+          - name: scale-up-business-hours
+            schedule: cron(0 8 ? * MON-FRI *)
+            min_capacity: 5
+          - name: scale-down-nights
+            schedule: cron(0 20 ? * MON-FRI *)
+            min_capacity: 2
+
+environments:
+  # Development environment
+  development:
+    infrastructure: ecs-basic
+    image: my-app:dev
+    config:
+      deployment_timeout_secs: 300
+
+  # Staging with logs enabled
+  staging:
+    infrastructure: ecs-with-logs
+    image: my-app:staging
+    config:
+      deployment_timeout_secs: 600
+
+  # Production with full features
+  production:
+    infrastructure: ecs-production
+    image: my-app:v1.2.3
+    deployment_type: rolling-update
+    config:
+      deployment_timeout_secs: 900
+      # Override auto-scaling for this environment
+      autoscaling:
+        enabled: true
+        min_capacity: 5
+        max_capacity: 100
+        target_tracking:
+          target_value: 60.0
+          metric_type: ECSServiceAverageCPUUtilization
+          disable_scale_in: false
+
+# Auto Scaling Metric Types:
+# - ECSServiceAverageCPUUtilization: Scale based on CPU usage
+# - ECSServiceAverageMemoryUtilization: Scale based on memory usage
+# - ALBRequestCountPerTarget: Scale based on ALB request count
+
+# Scheduled Scaling Schedule Format:
+# - cron(Minutes Hours Day-of-month Month Day-of-week Year)
+# - Examples:
+#   - cron(0 8 ? * MON-FRI *) - 8 AM on weekdays
+#   - cron(0 0 1 * ? *) - First day of each month at midnight

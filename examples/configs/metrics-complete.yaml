@@ -1,0 +1,254 @@
+# Complete Metrics Configuration Example
+# This configuration demonstrates a multi-infrastructure setup with
+# both CloudWatch and Prometheus metrics providers.
+
+infrastructure:
+  # AWS ECS for backend services
+  ecs-production:
+    type: aws-ecs
+    config:
+      cluster: myapp-production
+      region: us-east-1
+      launch_type: FARGATE
+      vpc_id: vpc-12345678
+      subnets:
+        - subnet-11111111
+        - subnet-22222222
+      security_groups:
+        - sg-12345678
+
+  # Kubernetes for microservices
+  k8s-production:
+    type: kubernetes
+    config:
+      context: production-cluster
+      namespace: production
+      kubeconfig: ~/.kube/config
+
+  # AWS Lambda for serverless functions
+  lambda-api:
+    type: aws-lambda
+    config:
+      region: us-east-1
+      function_name: myapp-api
+
+environments:
+  # ECS backend service
+  backend:
+    infrastructure: ecs-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-backend:v1.0.0
+    replicas: 4
+    resources:
+      cpu: "512"
+      memory: "1024"
+    env:
+      NODE_ENV: production
+
+  # Kubernetes microservices
+  microservices:
+    infrastructure: k8s-production
+    deployment_type: rolling-update
+    image: registry.example.com/myapp-services:v1.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+    env:
+      NODE_ENV: production
+
+  # Lambda API
+  api:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp-api:v1.0.0
+    env:
+      ENVIRONMENT: production
+
+# Complete metrics configuration
+metrics:
+  # CloudWatch provider for AWS infrastructure
+  cloudwatch:
+    region: us-east-1
+    namespace: MyApp/Production
+    ecs_cluster: myapp-production
+    ecs_service: myapp-backend
+    lambda_function: myapp-api
+
+  # Prometheus provider for Kubernetes infrastructure
+  prometheus:
+    url: http://prometheus.monitoring.svc.cluster.local:9090
+    timeout_seconds: 30
+
+  # Map each infrastructure type to its metrics provider
+  infrastructure_mapping:
+    aws-ecs: cloudwatch
+    aws-eks: cloudwatch
+    aws-lambda: cloudwatch
+    kubernetes: prometheus
+    docker-compose: prometheus  # If you have Prometheus scraping Docker
+
+  # Global thresholds applied to all standard metrics
+  thresholds:
+    cpu_utilization:
+      warning: 70
+      critical: 85
+    memory_utilization:
+      warning: 75
+      critical: 90
+    error_rate:
+      warning: 1
+      critical: 5
+    request_latency:
+      warning: 300
+      critical: 1000
+    request_count:
+      warning: 10000
+      critical: 50000
+
+  # Custom metrics combining both providers
+  custom_metrics:
+    # CloudWatch metrics for ECS
+    - name: ecs-cpu
+      display_name: "ECS CPU Utilization"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/ECS",
+          "MetricName": "CPUUtilization",
+          "Dimensions": [
+            {"Name": "ClusterName", "Value": "myapp-production"},
+            {"Name": "ServiceName", "Value": "myapp-backend"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: percent
+      thresholds:
+        warning: 70
+        critical: 85
+
+    - name: ecs-memory
+      display_name: "ECS Memory Utilization"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/ECS",
+          "MetricName": "MemoryUtilization",
+          "Dimensions": [
+            {"Name": "ClusterName", "Value": "myapp-production"},
+            {"Name": "ServiceName", "Value": "myapp-backend"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: percent
+      thresholds:
+        warning: 75
+        critical: 90
+
+    # CloudWatch metrics for Lambda
+    - name: lambda-invocations
+      display_name: "Lambda Invocations"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/Lambda",
+          "MetricName": "Invocations",
+          "Dimensions": [
+            {"Name": "FunctionName", "Value": "myapp-api"}
+          ],
+          "Statistic": "Sum"
+        }
+      unit: count
+
+    - name: lambda-errors
+      display_name: "Lambda Errors"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/Lambda",
+          "MetricName": "Errors",
+          "Dimensions": [
+            {"Name": "FunctionName", "Value": "myapp-api"}
+          ],
+          "Statistic": "Sum"
+        }
+      unit: count
+      thresholds:
+        warning: 1
+        critical: 10
+
+    - name: lambda-duration
+      display_name: "Lambda Duration"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/Lambda",
+          "MetricName": "Duration",
+          "Dimensions": [
+            {"Name": "FunctionName", "Value": "myapp-api"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: ms
+      thresholds:
+        warning: 1000
+        critical: 5000
+
+    # Prometheus metrics for Kubernetes
+    - name: k8s-requests-per-second
+      display_name: "K8s Requests/sec"
+      provider: prometheus
+      query: |
+        sum(rate(http_requests_total{namespace="production", app="myapp-services"}[5m]))
+      unit: req/s
+      thresholds:
+        warning: 1000
+        critical: 5000
+
+    - name: k8s-error-rate
+      display_name: "K8s Error Rate"
+      provider: prometheus
+      query: |
+        sum(rate(http_requests_total{namespace="production", app="myapp-services", status=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{namespace="production", app="myapp-services"}[5m]))
+        * 100
+      unit: percent
+      thresholds:
+        warning: 1
+        critical: 5
+
+    - name: k8s-p95-latency
+      display_name: "K8s P95 Latency"
+      provider: prometheus
+      query: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{namespace="production", app="myapp-services"}[5m])) by (le)
+        ) * 1000
+      unit: ms
+      thresholds:
+        warning: 300
+        critical: 1000
+
+    - name: k8s-pod-cpu
+      display_name: "K8s Pod CPU"
+      provider: prometheus
+      query: |
+        sum(rate(container_cpu_usage_seconds_total{namespace="production", pod=~"myapp-.*", container!=""}[5m])) * 100
+      unit: percent
+      thresholds:
+        warning: 70
+        critical: 85
+
+    - name: k8s-pod-memory
+      display_name: "K8s Pod Memory"
+      provider: prometheus
+      query: |
+        sum(container_memory_working_set_bytes{namespace="production", pod=~"myapp-.*", container!=""})
+        /
+        sum(kube_pod_container_resource_limits{namespace="production", pod=~"myapp-.*", resource="memory"})
+        * 100
+      unit: percent
+      thresholds:
+        warning: 75
+        critical: 90

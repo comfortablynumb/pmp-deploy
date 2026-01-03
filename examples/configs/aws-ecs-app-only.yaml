@@ -1,0 +1,64 @@
+# AWS ECS - App-Only Deployment Example
+# This configuration demonstrates deploying application updates only,
+# without modifying infrastructure (ALB, auto-scaling, etc.)
+
+infrastructure:
+  ecs-production:
+    type: aws-ecs
+    config:
+      cluster: myapp-production
+      region: us-east-1
+      # VPC configuration (already provisioned)
+      vpc_id: vpc-12345678
+      subnets:
+        - subnet-11111111
+        - subnet-22222222
+      security_groups:
+        - sg-12345678
+
+  ecs-staging:
+    type: aws-ecs
+    config:
+      cluster: myapp-staging
+      region: us-east-1
+      vpc_id: vpc-87654321
+      subnets:
+        - subnet-33333333
+        - subnet-44444444
+      security_groups:
+        - sg-87654321
+
+environments:
+  # Staging - rolling update for safe deployments
+  staging:
+    infrastructure: ecs-staging
+    deployment_type: rolling-update
+    # deploy_mode defaults to app-only
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "256"
+      memory: "512"
+    config:
+      batch_size: 50
+      health_check_timeout_secs: 120
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug
+
+  # Production - rolling update with smaller batches
+  production:
+    infrastructure: ecs-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.0.0
+    replicas: 4
+    resources:
+      cpu: "512"
+      memory: "1024"
+    config:
+      batch_size: 25
+      health_check_timeout_secs: 300
+      rollback_on_failure: true
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn

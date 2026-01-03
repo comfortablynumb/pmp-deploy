@@ -1,0 +1,42 @@
+# Example: AWS ECS Fargate deployment
+# Use for AWS Elastic Container Service with Fargate
+
+infrastructure:
+  ecs-fargate:
+    type: aws-ecs
+    config:
+      cluster: my-ecs-cluster
+      region: us-west-2
+      launch_type: FARGATE
+      vpc_config:
+        subnets:
+          - subnet-12345678
+          - subnet-87654321
+        security_groups:
+          - sg-abcdef01
+        assign_public_ip: true
+
+environments:
+  staging:
+    infrastructure: ecs-fargate
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "256"
+      memory: "512"
+    env:
+      NODE_ENV: staging
+      PORT: "3000"
+
+  production:
+    infrastructure: ecs-fargate
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/myapp:v1.0.0
+    replicas: 4
+    resources:
+      cpu: "512"
+      memory: "1024"
+    env:
+      NODE_ENV: production
+      PORT: "3000"

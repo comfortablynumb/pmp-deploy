@@ -1,0 +1,58 @@
+# Example: AWS EKS deployment
+# Use for AWS Elastic Kubernetes Service
+
+infrastructure:
+  eks-staging:
+    type: aws-eks
+    config:
+      cluster_name: my-eks-staging
+      region: us-east-1
+      namespace: staging
+      service_account: deploy-sa
+
+  eks-production:
+    type: aws-eks
+    config:
+      cluster_name: my-eks-production
+      region: us-east-1
+      namespace: production
+      service_account: deploy-sa
+
+environments:
+  staging:
+    infrastructure: eks-staging
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+      cpu_limit: "500m"
+      memory_limit: "512Mi"
+    env:
+      NODE_ENV: staging
+      AWS_REGION: us-east-1
+
+  production:
+    infrastructure: eks-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.0.0
+    replicas: 10
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    config:
+      canary_steps: [5, 10, 25, 50, 100]
+    env:
+      NODE_ENV: production
+      AWS_REGION: us-east-1
+
+secrets:
+  provider: aws-secrets-manager
+  secrets:
+    database_url:
+      key: prod/myapp/database_url
+    api_key:
+      key: prod/myapp/api_key

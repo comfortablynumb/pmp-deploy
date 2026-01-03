@@ -1,0 +1,133 @@
+# CloudWatch Metrics Configuration Example
+# This configuration demonstrates monitoring AWS infrastructure
+# using CloudWatch metrics during deployments.
+
+infrastructure:
+  ecs-production:
+    type: aws-ecs
+    config:
+      cluster: myapp-production
+      region: us-east-1
+      launch_type: FARGATE
+      vpc_id: vpc-12345678
+      subnets:
+        - subnet-11111111
+        - subnet-22222222
+      security_groups:
+        - sg-12345678
+
+environments:
+  production:
+    infrastructure: ecs-production
+    deployment_type: rolling-update
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.0.0
+    replicas: 4
+    resources:
+      cpu: "512"
+      memory: "1024"
+    env:
+      NODE_ENV: production
+
+# Metrics configuration for CloudWatch
+metrics:
+  # CloudWatch provider configuration
+  cloudwatch:
+    region: us-east-1
+    # Namespace for custom metrics (standard AWS metrics use their own namespaces)
+    namespace: MyApp/Production
+
+    # ECS-specific configuration
+    ecs_cluster: myapp-production
+    ecs_service: myapp-api
+
+  # Map infrastructure types to metrics providers
+  infrastructure_mapping:
+    aws-ecs: cloudwatch
+    aws-eks: cloudwatch
+    aws-lambda: cloudwatch
+
+  # Global thresholds for standard metrics
+  thresholds:
+    cpu_utilization:
+      warning: 70
+      critical: 90
+    memory_utilization:
+      warning: 75
+      critical: 90
+    error_rate:
+      warning: 1
+      critical: 5
+    request_latency:
+      warning: 500
+      critical: 2000
+    request_count:
+      warning: 10000
+      critical: 50000
+
+  # Custom CloudWatch metrics
+  custom_metrics:
+    - name: alb-request-count
+      display_name: "ALB Request Count"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/ApplicationELB",
+          "MetricName": "RequestCount",
+          "Dimensions": [
+            {"Name": "LoadBalancer", "Value": "app/myapp-alb/1234567890123456"}
+          ],
+          "Statistic": "Sum"
+        }
+      unit: count
+      thresholds:
+        warning: 10000
+        critical: 50000
+
+    - name: alb-target-response-time
+      display_name: "ALB Response Time"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/ApplicationELB",
+          "MetricName": "TargetResponseTime",
+          "Dimensions": [
+            {"Name": "LoadBalancer", "Value": "app/myapp-alb/1234567890123456"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: seconds
+      thresholds:
+        warning: 0.5
+        critical: 2.0
+
+    - name: ecs-running-tasks
+      display_name: "Running Tasks"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "ECS/ContainerInsights",
+          "MetricName": "RunningTaskCount",
+          "Dimensions": [
+            {"Name": "ClusterName", "Value": "myapp-production"},
+            {"Name": "ServiceName", "Value": "myapp-api"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: count
+
+    - name: sqs-queue-depth
+      display_name: "Queue Depth"
+      provider: cloudwatch
+      query: |
+        {
+          "Namespace": "AWS/SQS",
+          "MetricName": "ApproximateNumberOfMessagesVisible",
+          "Dimensions": [
+            {"Name": "QueueName", "Value": "myapp-queue"}
+          ],
+          "Statistic": "Average"
+        }
+      unit: messages
+      thresholds:
+        warning: 100
+        critical: 1000

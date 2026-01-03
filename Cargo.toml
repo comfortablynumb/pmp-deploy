@@ -1,0 +1,96 @@
+[workspace]
+members = [
+    ".",
+    "crates/pmp-deploy-plugin-sdk",
+    "examples/plugins/echo-plugin",
+]
+resolver = "2"
+
+[package]
+name = "pmp-deploy"
+version = "0.1.0"
+edition = "2024"
+description = "A CLI tool for simplified multi-infrastructure application deployments"
+license = "MIT"
+repository = "https://github.com/yourusername/pmp-deploy"
+
+[features]
+default = []
+kubernetes = ["dep:kube", "dep:k8s-openapi"]
+
+[dependencies]
+# Plugin SDK (local)
+pmp-deploy-plugin-sdk = { path = "crates/pmp-deploy-plugin-sdk" }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+dialoguer = "0.11"
+indicatif = "0.17"
+console = "0.15"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+directories = "5"
+shellexpand = "3"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+open = "5"
+
+# HTTP server (for UI)
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# AWS SDK
+aws-config = "1"
+aws-sdk-secretsmanager = "1"
+aws-sdk-sts = "1"
+aws-sdk-ecs = "1"
+aws-sdk-lambda = "1"
+aws-sdk-eks = "1"
+aws-sdk-elasticloadbalancingv2 = "1"
+aws-sdk-cloudwatchlogs = "1"
+aws-sdk-applicationautoscaling = "1"
+aws-sdk-cloudwatch = "1"
+
+# Kubernetes (optional)
+kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
+k8s-openapi = { version = "0.24", features = ["v1_31"], optional = true }
+
+# HTTP client (for Vault)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utilities
+base64 = "0.22"
+secrecy = "0.10"
+which = "7"
+futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+
+# SQLite for persistent storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Plugin system
+libloading = "0.8"
+regex = "1.12.2"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+
+[dev-dependencies]
+mockall = "0.12"
+tempfile = "3"
+tokio-test = "0.4"

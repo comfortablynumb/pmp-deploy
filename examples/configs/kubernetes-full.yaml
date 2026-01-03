@@ -1,0 +1,84 @@
+# Kubernetes - Full Deployment Example
+# This configuration demonstrates full deployment using Helm charts
+# for complete resource management including services, ingress, and HPA.
+
+infrastructure:
+  k8s-production:
+    type: kubernetes
+    config:
+      context: production-cluster
+      namespace: production
+      kubeconfig: ~/.kube/config
+
+      # Use Helm for full deployments
+      deployment_method: helm
+      helm:
+        chart: ./charts/myapp
+        release_name: myapp-production
+        values_files:
+          - ./charts/myapp/values-production.yaml
+        set:
+          image.tag: "${IMAGE_TAG}"
+          replicaCount: "5"
+          resources.requests.cpu: "500m"
+          resources.requests.memory: "512Mi"
+          resources.limits.cpu: "1000m"
+          resources.limits.memory: "1Gi"
+        wait: true
+        atomic: true
+        timeout: "10m"
+
+  k8s-staging:
+    type: kubernetes
+    config:
+      context: staging-cluster
+      namespace: staging
+      kubeconfig: ~/.kube/config
+
+      # Use Kustomize for staging
+      deployment_method: kustomize
+      kustomize:
+        base_path: ./k8s/base
+        overlay_path: ./k8s/overlays/staging
+
+environments:
+  # Production - all-in deployment with Helm for major releases
+  production:
+    infrastructure: k8s-production
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+      helm:
+        set:
+          autoscaling.enabled: "true"
+          autoscaling.minReplicas: "3"
+          autoscaling.maxReplicas: "10"
+          ingress.enabled: "true"
+          ingress.hosts[0].host: "api.myapp.com"
+          ingress.tls[0].secretName: "myapp-tls"
+          serviceMonitor.enabled: "true"
+    image: registry.example.com/myapp:v2.0.0
+    replicas: 5
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  # Staging - full deployment with Kustomize
+  staging:
+    infrastructure: k8s-staging
+    deployment_type: all-in
+    config:
+      deploy_mode: full
+    image: registry.example.com/myapp:staging
+    replicas: 2
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+    env:
+      NODE_ENV: staging
+      LOG_LEVEL: debug

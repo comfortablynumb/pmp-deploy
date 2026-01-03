@@ -1,0 +1,89 @@
+# Example: Kubernetes deployment using Helm charts
+# This configuration demonstrates how to deploy applications using Helm
+
+infrastructure:
+  # Kubernetes cluster with Helm support
+  k8s-with-helm:
+    type: kubernetes
+    config:
+      context: my-cluster-context
+      namespace: default
+      # Helm configuration at infrastructure level (shared defaults)
+      helm:
+        chart: ./charts/my-app          # Local chart path
+        release_name: my-app
+        values_files:
+          - ./charts/my-app/values.yaml
+        wait: true
+        timeout: "10m"
+        create_namespace: true
+
+  # Using a remote Helm repository
+  k8s-remote-helm:
+    type: kubernetes
+    config:
+      context: production-context
+      namespace: production
+      helm:
+        chart: nginx                    # Chart name from repo
+        repo: https://charts.bitnami.com/bitnami
+        repo_name: bitnami
+        version: "15.3.0"
+        release_name: web-server
+        wait: true
+        atomic: true                    # Rollback on failure
+
+environments:
+  # Development environment - uses local chart
+  development:
+    infrastructure: k8s-with-helm
+    image: my-app:dev
+    config:
+      helm:
+        set:
+          replicaCount: "1"
+          resources.requests.memory: "128Mi"
+          resources.requests.cpu: "100m"
+
+  # Staging environment - overrides values
+  staging:
+    infrastructure: k8s-with-helm
+    image: my-app:staging
+    config:
+      helm:
+        values_files:
+          - ./charts/my-app/values-staging.yaml
+        set:
+          replicaCount: "2"
+          ingress.enabled: "true"
+          ingress.hosts[0].host: "staging.example.com"
+
+  # Production environment - full configuration
+  production:
+    infrastructure: k8s-with-helm
+    image: my-app:v1.2.3
+    deployment_type: rolling-update
+    config:
+      helm:
+        values_files:
+          - ./charts/my-app/values-production.yaml
+        set:
+          replicaCount: "5"
+          resources.requests.memory: "512Mi"
+          resources.limits.memory: "1Gi"
+          autoscaling.enabled: "true"
+          autoscaling.minReplicas: "3"
+          autoscaling.maxReplicas: "10"
+        set_string:
+          annotations.version: "v1.2.3"
+        atomic: true
+        timeout: "15m"
+
+  # Remote chart deployment
+  nginx-prod:
+    infrastructure: k8s-remote-helm
+    config:
+      helm:
+        set:
+          replicaCount: "3"
+          service.type: "LoadBalancer"

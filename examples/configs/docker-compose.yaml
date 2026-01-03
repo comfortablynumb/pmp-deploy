@@ -1,0 +1,19 @@
+# Example: Local Docker Compose deployment
+# Use this for local development and testing
+
+infrastructure:
+  local:
+    type: docker-compose
+    config:
+      compose_file: docker-compose.yml
+      project_name: myapp
+
+environments:
+  development:
+    infrastructure: local
+    deployment_type: all-in
+    image: myapp:latest
+    env:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://localhost:5432/myapp_dev

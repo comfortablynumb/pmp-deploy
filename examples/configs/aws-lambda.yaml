@@ -1,0 +1,48 @@
+# Example: AWS Lambda deployment
+# Use for serverless function deployments
+
+infrastructure:
+  lambda-api:
+    type: aws-lambda
+    config:
+      function_name: my-api-handler
+      region: us-east-1
+      runtime: provided.al2
+      memory_mb: 256
+      timeout_seconds: 30
+      alias: live
+
+  lambda-worker:
+    type: aws-lambda
+    config:
+      function_name: my-worker-handler
+      region: us-east-1
+      runtime: provided.al2
+      memory_mb: 512
+      timeout_seconds: 300
+      alias: live
+
+environments:
+  api-staging:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-api:staging
+    env:
+      ENVIRONMENT: staging
+      LOG_LEVEL: debug
+
+  api-production:
+    infrastructure: lambda-api
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-api:v1.0.0
+    env:
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+
+  worker-production:
+    infrastructure: lambda-worker
+    deployment_type: all-in
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-worker:v1.0.0
+    env:
+      ENVIRONMENT: production
+      QUEUE_URL: https://sqs.us-east-1.amazonaws.com/123456789012/my-queue

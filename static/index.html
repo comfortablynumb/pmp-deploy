@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pmp-deploy</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-badge {
+            @apply px-2 py-1 rounded-full text-xs font-medium;
+        }
+        .log-container {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .gauge-card {
+            transition: all 0.3s ease;
+        }
+        .gauge-normal { border-color: #22c55e; }
+        .gauge-warning { border-color: #eab308; }
+        .gauge-critical { border-color: #ef4444; }
+        .gauge-unknown { border-color: #6b7280; }
+        .gauge-value-normal { color: #22c55e; }
+        .gauge-value-warning { color: #eab308; }
+        .gauge-value-critical { color: #ef4444; }
+        .gauge-value-unknown { color: #6b7280; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+            <div class="flex items-center space-x-3">
+                <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                <h1 class="text-xl font-bold">pmp-deploy</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span id="connection-status" class="flex items-center text-sm">
+                    <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                    Connected
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Project Selector -->
+        <div id="project-selector" class="mb-8">
+            <label class="block text-sm font-medium text-gray-400 mb-2">Select Project</label>
+            <select id="project-select" class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 w-full max-w-md focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                <option value="">Loading projects...</option>
+            </select>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Environments List -->
+            <div class="lg:col-span-1">
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700">
+                        <h2 class="text-lg font-semibold">Environments</h2>
+                    </div>
+                    <div id="environments-list" class="p-2">
+                        <p class="text-gray-500 text-sm p-4 text-center">Select a project to view environments</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Environment Details -->
+            <div class="lg:col-span-2">
+                <div id="environment-details" class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                        <h2 class="text-lg font-semibold">Environment Details</h2>
+                        <div id="env-actions" class="hidden space-x-2">
+                            <button id="btn-deploy" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                                Deploy
+                            </button>
+                            <button id="btn-rollback" class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                                Rollback
+                            </button>
+                            <button id="btn-status" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                                Refresh Status
+                            </button>
+                        </div>
+                    </div>
+                    <div id="env-content" class="p-4">
+                        <p class="text-gray-500 text-center py-8">Select an environment to view details</p>
+                    </div>
+                </div>
+
+                <!-- Metrics Section -->
+                <div id="metrics-section" class="mt-6 bg-gray-800 rounded-lg border border-gray-700 hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                        <h2 class="text-lg font-semibold">Metrics</h2>
+                        <div class="flex items-center space-x-3">
+                            <select id="metrics-time-range" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                                <option value="30m">Last 30 min</option>
+                                <option value="1h">Last 1 hour</option>
+                                <option value="6h">Last 6 hours</option>
+                                <option value="24h">Last 24 hours</option>
+                            </select>
+                            <button id="btn-refresh-metrics" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">
+                                Refresh
+                            </button>
+                            <button id="btn-stream-metrics" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">
+                                Live
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Gauge Cards -->
+                    <div id="metrics-gauges" class="p-4 grid grid-cols-5 gap-3">
+                        <!-- Gauge cards will be populated here -->
+                    </div>
+
+                    <!-- Time Series Charts -->
+                    <div id="metrics-charts" class="p-4 pt-0 grid grid-cols-2 gap-4">
+                        <div class="bg-gray-900 rounded-lg p-3">
+                            <h4 class="text-sm font-medium text-gray-400 mb-2">CPU & Memory</h4>
+                            <canvas id="chart-resources" height="150"></canvas>
+                        </div>
+                        <div class="bg-gray-900 rounded-lg p-3">
+                            <h4 class="text-sm font-medium text-gray-400 mb-2">Requests & Latency</h4>
+                            <canvas id="chart-requests" height="150"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Section -->
+                <div id="logs-section" class="mt-6 bg-gray-800 rounded-lg border border-gray-700 hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                        <h2 class="text-lg font-semibold">Logs</h2>
+                        <div class="space-x-2">
+                            <button id="btn-stream-logs" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">
+                                Stream Logs
+                            </button>
+                            <button id="btn-clear-logs" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div id="logs-container" class="log-container bg-gray-900 p-4 h-64 overflow-y-auto">
+                        <p class="text-gray-500">No logs available</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Deploy Modal -->
+    <div id="deploy-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-md mx-4">
+            <h3 class="text-lg font-semibold mb-4">Deploy to <span id="deploy-env-name"></span></h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Image (optional override)</label>
+                    <input type="text" id="deploy-image" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500" placeholder="my-app:v1.0.0">
+                </div>
+                <div class="flex items-center">
+                    <input type="checkbox" id="deploy-dry-run" class="w-4 h-4 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500">
+                    <label for="deploy-dry-run" class="ml-2 text-sm text-gray-400">Dry run (no actual changes)</label>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 mt-6">
+                <button id="btn-cancel-deploy" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors">
+                    Cancel
+                </button>
+                <button id="btn-confirm-deploy" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
+                    Deploy
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rollback Modal -->
+    <div id="rollback-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-md mx-4">
+            <h3 class="text-lg font-semibold mb-4">Rollback <span id="rollback-env-name"></span></h3>
+            <p class="text-gray-400 mb-4">Are you sure you want to rollback this environment to the previous version?</p>
+            <div class="flex justify-end space-x-3">
+                <button id="btn-cancel-rollback" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors">
+                    Cancel
+                </button>
+                <button id="btn-confirm-rollback" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors">
+                    Rollback
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 right-4 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 hidden transform transition-transform duration-300 translate-y-full">
+        <div class="flex items-center space-x-3">
+            <span id="toast-icon"></span>
+            <span id="toast-message"></span>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        let currentProject = null;
+        let currentEnvironment = null;
+        let logEventSource = null;
+        let metricsEventSource = null;
+        let resourcesChart = null;
+        let requestsChart = null;
+
+        // Initialize
+        $(document).ready(function() {
+            loadProjects();
+            setupEventHandlers();
+            initCharts();
+        });
+
+        function setupEventHandlers() {
+            $('#project-select').on('change', function() {
+                const projectId = $(this).val();
+                if (projectId) {
+                    selectProject(projectId);
+                } else {
+                    clearEnvironments();
+                }
+            });
+
+            $('#btn-deploy').on('click', showDeployModal);
+            $('#btn-rollback').on('click', showRollbackModal);
+            $('#btn-status').on('click', refreshStatus);
+            $('#btn-stream-logs').on('click', toggleLogStream);
+            $('#btn-clear-logs').on('click', clearLogs);
+
+            $('#btn-cancel-deploy').on('click', hideDeployModal);
+            $('#btn-confirm-deploy').on('click', confirmDeploy);
+
+            $('#btn-cancel-rollback').on('click', hideRollbackModal);
+            $('#btn-confirm-rollback').on('click', confirmRollback);
+
+            // Metrics handlers
+            $('#btn-refresh-metrics').on('click', refreshMetrics);
+            $('#btn-stream-metrics').on('click', toggleMetricsStream);
+            $('#metrics-time-range').on('change', refreshMetrics);
+        }
+
+        // Chart.js Initialization
+        function initCharts() {
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#9ca3af', font: { size: 10 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'minute' },
+                        grid: { color: '#374151' },
+                        ticks: { color: '#9ca3af', font: { size: 10 } }
+                    },
+                    y: {
+                        grid: { color: '#374151' },
+                        ticks: { color: '#9ca3af', font: { size: 10 } }
+                    }
+                }
+            };
+
+            const ctx1 = document.getElementById('chart-resources').getContext('2d');
+            resourcesChart = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'CPU %',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'Memory %',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        }
+                    ]
+                },
+                options: commonOptions
+            });
+
+            const ctx2 = document.getElementById('chart-requests').getContext('2d');
+            requestsChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Requests/s',
+                            data: [],
+                            borderColor: '#22c55e',
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Latency (ms)',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af', font: { size: 10 } }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#9ca3af', font: { size: 10 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // API Functions
+        async function loadProjects() {
+            try {
+                const response = await $.get(`${API_BASE}/projects`);
+                const select = $('#project-select');
+                select.empty();
+                select.append('<option value="">Select a project...</option>');
+
+                if (response.projects.length === 0) {
+                    select.append('<option value="" disabled>No projects configured</option>');
+                } else {
+                    response.projects.forEach(project => {
+                        const status = project.config_exists ? '' : ' (config missing)';
+                        select.append(`<option value="${project.id}" ${!project.config_exists ? 'disabled' : ''}>${project.name}${status}</option>`);
+                    });
+                }
+            } catch (error) {
+                showToast('Failed to load projects', 'error');
+                console.error('Error loading projects:', error);
+            }
+        }
+
+        async function selectProject(projectId) {
+            currentProject = projectId;
+            currentEnvironment = null;
+
+            try {
+                const response = await $.get(`${API_BASE}/projects/${projectId}/environments`);
+                renderEnvironments(response.environments);
+                clearEnvironmentDetails();
+            } catch (error) {
+                showToast('Failed to load environments', 'error');
+                console.error('Error loading environments:', error);
+            }
+        }
+
+        function renderEnvironments(environments) {
+            const container = $('#environments-list');
+            container.empty();
+
+            if (environments.length === 0) {
+                container.html('<p class="text-gray-500 text-sm p-4 text-center">No environments configured</p>');
+                return;
+            }
+
+            environments.forEach(env => {
+                const card = $(`
+                    <div class="env-card p-3 rounded-lg cursor-pointer hover:bg-gray-700 transition-colors border border-transparent" data-env="${env.name}">
+                        <div class="flex items-center justify-between">
+                            <span class="font-medium">${env.name}</span>
+                            <span class="text-xs text-gray-400">${env.infrastructure_type}</span>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1">${env.deployment_type}</div>
+                    </div>
+                `);
+
+                card.on('click', function() {
+                    $('.env-card').removeClass('bg-gray-700 border-blue-500').addClass('border-transparent');
+                    $(this).addClass('bg-gray-700 border-blue-500').removeClass('border-transparent');
+                    selectEnvironment(env.name);
+                });
+
+                container.append(card);
+            });
+        }
+
+        async function selectEnvironment(envName) {
+            currentEnvironment = envName;
+
+            try {
+                const response = await $.get(`${API_BASE}/projects/${currentProject}/environments/${envName}`);
+                renderEnvironmentDetails(response.environment);
+                $('#env-actions').removeClass('hidden');
+                $('#logs-section').removeClass('hidden');
+                $('#metrics-section').removeClass('hidden');
+
+                // Load metrics
+                await loadMetrics();
+                initGauges();
+            } catch (error) {
+                showToast('Failed to load environment details', 'error');
+                console.error('Error loading environment:', error);
+            }
+        }
+
+        function renderEnvironmentDetails(env) {
+            const content = $('#env-content');
+            content.html(`
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-400 mb-2">General</h4>
+                        <dl class="space-y-2">
+                            <div>
+                                <dt class="text-xs text-gray-500">Name</dt>
+                                <dd class="font-medium">${env.name}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-500">Infrastructure</dt>
+                                <dd>${env.infrastructure} <span class="text-gray-500">(${env.infrastructure_type})</span></dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-500">Deployment Type</dt>
+                                <dd>${env.deployment_type}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-500">Image</dt>
+                                <dd class="font-mono text-sm">${env.image || 'Not specified'}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-500">Replicas</dt>
+                                <dd>${env.replicas || 'Default'}</dd>
+                            </div>
+                        </dl>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-400 mb-2">Resources</h4>
+                        ${renderResources(env.resources)}
+                        <h4 class="text-sm font-medium text-gray-400 mb-2 mt-4">Status</h4>
+                        <div id="env-status" class="text-gray-500">Click "Refresh Status" to load</div>
+                    </div>
+                </div>
+                ${renderEnvVars(env.env_vars)}
+            `);
+        }
+
+        function renderResources(resources) {
+            if (!resources) {
+                return '<p class="text-gray-500 text-sm">Not configured</p>';
+            }
+
+            return `
+                <dl class="space-y-2">
+                    <div class="flex justify-between">
+                        <dt class="text-xs text-gray-500">CPU</dt>
+                        <dd class="text-sm">${resources.cpu || '-'}</dd>
+                    </div>
+                    <div class="flex justify-between">
+                        <dt class="text-xs text-gray-500">Memory</dt>
+                        <dd class="text-sm">${resources.memory || '-'}</dd>
+                    </div>
+                    <div class="flex justify-between">
+                        <dt class="text-xs text-gray-500">CPU Limit</dt>
+                        <dd class="text-sm">${resources.cpu_limit || '-'}</dd>
+                    </div>
+                    <div class="flex justify-between">
+                        <dt class="text-xs text-gray-500">Memory Limit</dt>
+                        <dd class="text-sm">${resources.memory_limit || '-'}</dd>
+                    </div>
+                </dl>
+            `;
+        }
+
+        function renderEnvVars(envVars) {
+            if (!envVars || Object.keys(envVars).length === 0) {
+                return '';
+            }
+
+            let html = '<h4 class="text-sm font-medium text-gray-400 mb-2 mt-6">Environment Variables</h4>';
+            html += '<div class="bg-gray-900 rounded p-3 font-mono text-xs">';
+
+            for (const [key, value] of Object.entries(envVars)) {
+                html += `<div class="flex"><span class="text-blue-400">${key}</span>=<span class="text-green-400">${value}</span></div>`;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        async function refreshStatus() {
+            if (!currentProject || !currentEnvironment) return;
+
+            const statusDiv = $('#env-status');
+            statusDiv.html('<div class="loader"></div> Loading...');
+
+            try {
+                const response = await $.get(`${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/status`);
+                statusDiv.html(`<pre class="text-xs text-gray-300 whitespace-pre-wrap">${response.status}</pre>`);
+            } catch (error) {
+                statusDiv.html('<span class="text-red-400">Failed to load status</span>');
+                showToast('Failed to load status', 'error');
+            }
+        }
+
+        // Metrics Functions
+        function initGauges() {
+            const container = $('#metrics-gauges');
+            container.empty();
+
+            const metrics = [
+                { name: 'cpu_utilization', display: 'CPU', unit: '%', value: 0 },
+                { name: 'memory_utilization', display: 'Memory', unit: '%', value: 0 },
+                { name: 'error_rate', display: 'Errors', unit: '%', value: 0 },
+                { name: 'request_latency', display: 'Latency', unit: 'ms', value: 0 },
+                { name: 'request_count', display: 'Requests', unit: '/s', value: 0 }
+            ];
+
+            metrics.forEach(m => {
+                container.append(`
+                    <div id="gauge-${m.name}" class="gauge-card bg-gray-900 rounded-lg p-3 border-l-4 gauge-unknown">
+                        <div class="text-xs text-gray-400 mb-1">${m.display}</div>
+                        <div class="flex items-baseline">
+                            <span class="text-2xl font-bold gauge-value-unknown" id="gauge-value-${m.name}">--</span>
+                            <span class="text-xs text-gray-500 ml-1">${m.unit}</span>
+                        </div>
+                    </div>
+                `);
+            });
+        }
+
+        function updateGauge(name, value, status) {
+            const card = $(`#gauge-${name}`);
+            const valueEl = $(`#gauge-value-${name}`);
+
+            card.removeClass('gauge-normal gauge-warning gauge-critical gauge-unknown');
+            valueEl.removeClass('gauge-value-normal gauge-value-warning gauge-value-critical gauge-value-unknown');
+
+            card.addClass(`gauge-${status}`);
+            valueEl.addClass(`gauge-value-${status}`);
+            valueEl.text(value.toFixed(1));
+        }
+
+        async function loadMetrics() {
+            if (!currentProject || !currentEnvironment) return;
+
+            try {
+                const response = await $.get(`${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/metrics`);
+                console.log('Available metrics:', response.metrics);
+            } catch (error) {
+                console.error('Failed to load metrics list:', error);
+            }
+        }
+
+        async function refreshMetrics() {
+            if (!currentProject || !currentEnvironment) return;
+
+            const range = $('#metrics-time-range').val();
+
+            // For demo, generate mock data
+            const now = Date.now();
+            const dataPoints = [];
+            const interval = range === '30m' ? 60000 : range === '1h' ? 120000 : range === '6h' ? 600000 : 3600000;
+            const count = 30;
+
+            for (let i = count - 1; i >= 0; i--) {
+                dataPoints.push({
+                    x: new Date(now - i * interval),
+                    cpu: 30 + Math.random() * 40,
+                    memory: 40 + Math.random() * 30,
+                    requests: 50 + Math.random() * 100,
+                    latency: 50 + Math.random() * 150
+                });
+            }
+
+            // Update charts
+            resourcesChart.data.datasets[0].data = dataPoints.map(d => ({ x: d.x, y: d.cpu }));
+            resourcesChart.data.datasets[1].data = dataPoints.map(d => ({ x: d.x, y: d.memory }));
+            resourcesChart.update('none');
+
+            requestsChart.data.datasets[0].data = dataPoints.map(d => ({ x: d.x, y: d.requests }));
+            requestsChart.data.datasets[1].data = dataPoints.map(d => ({ x: d.x, y: d.latency }));
+            requestsChart.update('none');
+
+            // Update gauges with latest values
+            const latest = dataPoints[dataPoints.length - 1];
+            updateGauge('cpu_utilization', latest.cpu, latest.cpu > 80 ? 'critical' : latest.cpu > 60 ? 'warning' : 'normal');
+            updateGauge('memory_utilization', latest.memory, latest.memory > 85 ? 'critical' : latest.memory > 70 ? 'warning' : 'normal');
+            updateGauge('error_rate', Math.random() * 2, 'normal');
+            updateGauge('request_latency', latest.latency, latest.latency > 150 ? 'critical' : latest.latency > 100 ? 'warning' : 'normal');
+            updateGauge('request_count', latest.requests, 'normal');
+        }
+
+        function toggleMetricsStream() {
+            if (metricsEventSource) {
+                stopMetricsStream();
+            } else {
+                startMetricsStream();
+            }
+        }
+
+        function startMetricsStream() {
+            if (!currentProject || !currentEnvironment) return;
+
+            const btn = $('#btn-stream-metrics');
+            btn.text('Stop').addClass('bg-red-600').removeClass('bg-gray-700');
+
+            metricsEventSource = new EventSource(`${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/metrics/stream`);
+
+            metricsEventSource.addEventListener('metrics', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'gauges') {
+                        data.data.forEach(g => {
+                            updateGauge(g.metric_name, g.current_value, g.status);
+                        });
+                    }
+                } catch (e) {
+                    console.error('Failed to parse metrics event:', e);
+                }
+            });
+
+            metricsEventSource.onerror = function() {
+                stopMetricsStream();
+                showToast('Metrics stream disconnected', 'warning');
+            };
+        }
+
+        function stopMetricsStream() {
+            if (metricsEventSource) {
+                metricsEventSource.close();
+                metricsEventSource = null;
+            }
+
+            const btn = $('#btn-stream-metrics');
+            btn.text('Live').removeClass('bg-red-600').addClass('bg-gray-700');
+        }
+
+        // Deploy Functions
+        function showDeployModal() {
+            $('#deploy-env-name').text(currentEnvironment);
+            $('#deploy-image').val('');
+            $('#deploy-dry-run').prop('checked', false);
+            $('#deploy-modal').removeClass('hidden').addClass('flex');
+        }
+
+        function hideDeployModal() {
+            $('#deploy-modal').removeClass('flex').addClass('hidden');
+        }
+
+        async function confirmDeploy() {
+            const image = $('#deploy-image').val() || null;
+            const dryRun = $('#deploy-dry-run').is(':checked');
+
+            hideDeployModal();
+
+            try {
+                showToast('Deploying...', 'info');
+
+                const response = await $.ajax({
+                    url: `${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/deploy`,
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ image, dry_run: dryRun })
+                });
+
+                if (response.success) {
+                    showToast(response.dry_run ? `Dry run: ${response.message}` : `Deployed: ${response.message}`, 'success');
+                } else {
+                    showToast(`Deploy failed: ${response.message}`, 'error');
+                }
+            } catch (error) {
+                showToast('Deploy failed: ' + (error.responseJSON?.error || 'Unknown error'), 'error');
+            }
+        }
+
+        // Rollback Functions
+        function showRollbackModal() {
+            $('#rollback-env-name').text(currentEnvironment);
+            $('#rollback-modal').removeClass('hidden').addClass('flex');
+        }
+
+        function hideRollbackModal() {
+            $('#rollback-modal').removeClass('flex').addClass('hidden');
+        }
+
+        async function confirmRollback() {
+            hideRollbackModal();
+
+            try {
+                showToast('Rolling back...', 'info');
+
+                const response = await $.ajax({
+                    url: `${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/rollback`,
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({})
+                });
+
+                if (response.success) {
+                    showToast(`Rollback successful: ${response.message}`, 'success');
+                } else {
+                    showToast(`Rollback failed: ${response.message}`, 'error');
+                }
+            } catch (error) {
+                showToast('Rollback failed: ' + (error.responseJSON?.error || 'Unknown error'), 'error');
+            }
+        }
+
+        // Logs Functions
+        function toggleLogStream() {
+            if (logEventSource) {
+                stopLogStream();
+            } else {
+                startLogStream();
+            }
+        }
+
+        function startLogStream() {
+            if (!currentProject || !currentEnvironment) return;
+
+            const container = $('#logs-container');
+            container.html('');
+
+            const btn = $('#btn-stream-logs');
+            btn.text('Stop Streaming').addClass('bg-red-600').removeClass('bg-gray-700');
+
+            logEventSource = new EventSource(`${API_BASE}/projects/${currentProject}/environments/${currentEnvironment}/logs`);
+
+            logEventSource.addEventListener('log', function(event) {
+                const line = $(`<div class="text-gray-300">${event.data}</div>`);
+                container.append(line);
+                container.scrollTop(container[0].scrollHeight);
+            });
+
+            logEventSource.onerror = function() {
+                stopLogStream();
+                showToast('Log stream disconnected', 'warning');
+            };
+        }
+
+        function stopLogStream() {
+            if (logEventSource) {
+                logEventSource.close();
+                logEventSource = null;
+            }
+
+            const btn = $('#btn-stream-logs');
+            btn.text('Stream Logs').removeClass('bg-red-600').addClass('bg-gray-700');
+        }
+
+        function clearLogs() {
+            $('#logs-container').html('<p class="text-gray-500">No logs available</p>');
+        }
+
+        // Utility Functions
+        function clearEnvironments() {
+            currentProject = null;
+            currentEnvironment = null;
+            $('#environments-list').html('<p class="text-gray-500 text-sm p-4 text-center">Select a project to view environments</p>');
+            clearEnvironmentDetails();
+        }
+
+        function clearEnvironmentDetails() {
+            $('#env-content').html('<p class="text-gray-500 text-center py-8">Select an environment to view details</p>');
+            $('#env-actions').addClass('hidden');
+            $('#logs-section').addClass('hidden');
+            $('#metrics-section').addClass('hidden');
+            stopLogStream();
+            stopMetricsStream();
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = $('#toast');
+            const iconEl = $('#toast-icon');
+            const messageEl = $('#toast-message');
+
+            const icons = {
+                success: '<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>',
+                error: '<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>',
+                warning: '<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
+                info: '<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>'
+            };
+
+            iconEl.html(icons[type] || icons.info);
+            messageEl.text(message);
+
+            toast.removeClass('hidden translate-y-full');
+
+            setTimeout(() => {
+                toast.addClass('translate-y-full');
+                setTimeout(() => toast.addClass('hidden'), 300);
+            }, 4000);
+        }
+    </script>
+</body>
+</html>

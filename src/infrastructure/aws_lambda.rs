@@ -6,6 +6,10 @@ use aws_sdk_lambda::types::{
 use aws_sdk_lambda::Client as LambdaClient;
 use std::collections::HashMap;
 
+use super::lambda_extended::{
+    EventSourceConfig, EventSourceManager, LayerConfig, LayerManager, LambdaPackager,
+    ZipPackageConfig,
+};
 use super::provider::{DeploymentContext, InfrastructureProvider, InfrastructureType};
 use super::provisioning::{
     compute_lambda_diff, LambdaCurrentState, LambdaProvisioningConfig, LambdaVpcConfig,
@@ -20,6 +24,9 @@ pub struct AwsLambdaProvider {
     region: String,
     alias: Option<String>,
     provisioning_config: Option<LambdaProvisioningConfig>,
+    zip_config: Option<ZipPackageConfig>,
+    layer_configs: Vec<LayerConfig>,
+    event_source_configs: Vec<EventSourceConfig>,
 }
 
 impl AwsLambdaProvider {
@@ -37,6 +44,9 @@ impl AwsLambdaProvider {
             region: region.to_string(),
             alias: None,
             provisioning_config: None,
+            zip_config: None,
+            layer_configs: Vec::new(),
+            event_source_configs: Vec::new(),
         })
     }
 
@@ -47,6 +57,21 @@ impl AwsLambdaProvider {
 
     pub fn with_provisioning(mut self, config: LambdaProvisioningConfig) -> Self {
         self.provisioning_config = Some(config);
+        self
+    }
+
+    pub fn with_zip_config(mut self, config: ZipPackageConfig) -> Self {
+        self.zip_config = Some(config);
+        self
+    }
+
+    pub fn with_layers(mut self, layers: Vec<LayerConfig>) -> Self {
+        self.layer_configs = layers;
+        self
+    }
+
+    pub fn with_event_sources(mut self, sources: Vec<EventSourceConfig>) -> Self {
+        self.event_source_configs = sources;
         self
     }
 
@@ -70,8 +95,37 @@ impl AwsLambdaProvider {
         }
 
         if let Some(provision_value) = config.config.get("provision") {
-            if let Some(provision_config) = LambdaProvisioningConfig::from_yaml_value(provision_value) {
+            if let Some(provision_config) =
+                LambdaProvisioningConfig::from_yaml_value(provision_value)
+            {
                 provider.provisioning_config = Some(provision_config);
+            }
+        }
+
+        // Parse ZIP packaging config
+        if let Some(zip_value) = config.config.get("zip_package") {
+            if let Some(zip_config) = ZipPackageConfig::from_yaml_value(zip_value) {
+                provider.zip_config = Some(zip_config);
+            }
+        }
+
+        // Parse layer configs
+        if let Some(layers_value) = config.config.get("layers") {
+            if let Some(layers_seq) = layers_value.as_sequence() {
+                provider.layer_configs = layers_seq
+                    .iter()
+                    .filter_map(LayerConfig::from_yaml_value)
+                    .collect();
+            }
+        }
+
+        // Parse event source mappings
+        if let Some(sources_value) = config.config.get("event_sources") {
+            if let Some(sources_seq) = sources_value.as_sequence() {
+                provider.event_source_configs = sources_seq
+                    .iter()
+                    .filter_map(EventSourceConfig::from_yaml_value)
+                    .collect();
             }
         }
 
@@ -264,6 +318,154 @@ impl AwsLambdaProvider {
             .await?;
 
         Ok(())
+    }
+
+    // ========== ZIP Deployment Methods ==========
+
+    /// Deploy function code from a ZIP file.
+    async fn update_function_zip(&self, zip_data: Vec<u8>) -> anyhow::Result<String> {
+        let response = self
+            .lambda_client
+            .update_function_code()
+            .function_name(&self.function_name)
+            .zip_file(aws_sdk_lambda::primitives::Blob::new(zip_data))
+            .send()
+            .await?;
+
+        let version = response.version.unwrap_or_else(|| "$LATEST".to_string());
+        Ok(version)
+    }
+
+    /// Deploy function code from S3.
+    async fn update_function_s3(&self, bucket: &str, key: &str) -> anyhow::Result<String> {
+        let response = self
+            .lambda_client
+            .update_function_code()
+            .function_name(&self.function_name)
+            .s3_bucket(bucket)
+            .s3_key(key)
+            .send()
+            .await?;
+
+        let version = response.version.unwrap_or_else(|| "$LATEST".to_string());
+        Ok(version)
+    }
+
+    /// Deploy using ZIP packaging configuration.
+    async fn deploy_zip(&self, ctx: &DeploymentContext) -> anyhow::Result<String> {
+        let zip_config = self.get_merged_zip_config(ctx).ok_or_else(|| {
+            anyhow::anyhow!("ZIP package configuration is required for ZIP deployment")
+        })?;
+
+        tracing::info!("Creating ZIP package from {}", zip_config.source_path);
+        let zip_data = LambdaPackager::create_zip(&zip_config)?;
+
+        // If S3 bucket is configured, upload to S3 first
+        if let Some(bucket) = &zip_config.s3_bucket {
+            let key = zip_config.s3_key(&self.function_name);
+            tracing::info!("Uploading ZIP to s3://{}/{}", bucket, key);
+
+            LambdaPackager::upload_to_s3(&zip_data, bucket, &key, &self.region).await?;
+
+            self.update_function_s3(bucket, &key).await
+        } else {
+            // Direct ZIP upload (limited to 50MB)
+            if zip_data.len() > 50 * 1024 * 1024 {
+                anyhow::bail!(
+                    "ZIP file size ({} MB) exceeds 50MB limit for direct upload. Configure s3_bucket for larger packages.",
+                    zip_data.len() / (1024 * 1024)
+                );
+            }
+
+            self.update_function_zip(zip_data).await
+        }
+    }
+
+    fn get_merged_zip_config(&self, ctx: &DeploymentContext) -> Option<ZipPackageConfig> {
+        ctx.environment
+            .config
+            .get("zip_package")
+            .and_then(ZipPackageConfig::from_yaml_value)
+            .or_else(|| self.zip_config.clone())
+    }
+
+    // ========== Layer Management Methods ==========
+
+    /// Publish all configured layers and return their ARNs.
+    pub async fn publish_layers(&self) -> anyhow::Result<Vec<String>> {
+        let layer_manager = LayerManager::new(self.lambda_client.clone());
+        let mut layer_arns = Vec::new();
+
+        for config in &self.layer_configs {
+            let published = layer_manager.publish_layer(config, &self.region).await?;
+            layer_arns.push(published.arn);
+        }
+
+        Ok(layer_arns)
+    }
+
+    /// Update function to use the specified layers.
+    pub async fn update_function_layers(&self, layer_arns: &[String]) -> anyhow::Result<()> {
+        if layer_arns.is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Updating function {} with {} layers",
+            self.function_name,
+            layer_arns.len()
+        );
+
+        self.lambda_client
+            .update_function_configuration()
+            .function_name(&self.function_name)
+            .set_layers(Some(layer_arns.to_vec()))
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
+    /// Cleanup old layer versions, keeping the most recent N versions.
+    pub async fn cleanup_layer_versions(&self, keep_versions: usize) -> anyhow::Result<usize> {
+        let layer_manager = LayerManager::new(self.lambda_client.clone());
+        let mut total_deleted = 0;
+
+        for config in &self.layer_configs {
+            let deleted = layer_manager
+                .cleanup_old_versions(&config.name, keep_versions)
+                .await?;
+            total_deleted += deleted;
+        }
+
+        Ok(total_deleted)
+    }
+
+    // ========== Event Source Mapping Methods ==========
+
+    /// Configure all event source mappings.
+    pub async fn configure_event_sources(&self) -> anyhow::Result<Vec<String>> {
+        let manager = EventSourceManager::new(self.lambda_client.clone(), &self.function_name);
+        let mut uuids = Vec::new();
+
+        for config in &self.event_source_configs {
+            let mapping = manager.configure_event_source(config).await?;
+            uuids.push(mapping.uuid);
+        }
+
+        Ok(uuids)
+    }
+
+    /// List all event source mappings for the function.
+    pub async fn list_event_sources(&self) -> anyhow::Result<Vec<super::lambda_extended::EventSourceMapping>> {
+        let manager = EventSourceManager::new(self.lambda_client.clone(), &self.function_name);
+        manager.list_event_sources().await
+    }
+
+    /// Delete an event source mapping by UUID.
+    pub async fn delete_event_source(&self, uuid: &str) -> anyhow::Result<()> {
+        let manager = EventSourceManager::new(self.lambda_client.clone(), &self.function_name);
+        manager.delete_event_source(uuid).await
     }
 
     // ========== Provisioning Methods ==========
@@ -659,41 +861,60 @@ impl InfrastructureProvider for AwsLambdaProvider {
     }
 
     async fn deploy(&self, ctx: &DeploymentContext) -> anyhow::Result<DeploymentResult> {
-        let image = ctx
-            .environment
-            .image
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No image URI specified for deployment"))?;
-
         let alias = self.get_alias_or_default(ctx);
         let is_app_only = ctx.deploy_mode.is_app_only();
+
+        // Determine deployment type: ZIP or container image
+        let has_zip_config = self.get_merged_zip_config(ctx).is_some();
+        let has_image = ctx.environment.image.is_some();
+
+        if !has_zip_config && !has_image {
+            anyhow::bail!(
+                "Either image URI or zip_package configuration is required for deployment"
+            );
+        }
+
+        let deployment_source = if has_zip_config { "ZIP" } else { "image" };
+        let source_identifier = if has_zip_config {
+            self.get_merged_zip_config(ctx)
+                .map(|c| c.source_path.clone())
+                .unwrap_or_else(|| "zip".to_string())
+        } else {
+            ctx.environment.image.clone().unwrap_or_default()
+        };
 
         if ctx.dry_run {
             let mode_msg = if is_app_only { " (app-only)" } else { "" };
             let msg = if let Some(alias_name) = &alias {
                 format!(
-                    "Would deploy {} to Lambda function {} (alias: {}){}",
-                    image, self.function_name, alias_name, mode_msg
+                    "Would deploy {} ({}) to Lambda function {} (alias: {}){}",
+                    source_identifier, deployment_source, self.function_name, alias_name, mode_msg
                 )
             } else {
                 format!(
-                    "Would deploy {} to Lambda function {}{}",
-                    image, self.function_name, mode_msg
+                    "Would deploy {} ({}) to Lambda function {}{}",
+                    source_identifier, deployment_source, self.function_name, mode_msg
                 )
             };
             return Ok(DeploymentResult::success(msg));
         }
 
         tracing::info!(
-            "Deploying {} to Lambda function {} in {} (mode: {:?})",
-            image,
+            "Deploying {} ({}) to Lambda function {} in {} (mode: {:?})",
+            source_identifier,
+            deployment_source,
             self.function_name,
             self.region,
             ctx.deploy_mode
         );
 
-        // Update the function code (image) - this is the core of any deployment
-        self.update_function_image(image).await?;
+        // Update the function code - either ZIP or container image
+        if has_zip_config {
+            self.deploy_zip(ctx).await?;
+        } else {
+            let image = ctx.environment.image.as_ref().unwrap();
+            self.update_function_image(image).await?;
+        }
 
         let timeout = ctx
             .environment
@@ -716,7 +937,7 @@ impl InfrastructureProvider for AwsLambdaProvider {
         let mut deployed_version = "$LATEST".to_string();
 
         if let Some(alias_name) = &alias {
-            let description = format!("Deployed via pmp-deploy: {}", image);
+            let description = format!("Deployed via pmp-deploy: {}", source_identifier);
             deployed_version = self.publish_version(&description).await?;
 
             tracing::info!("Published version: {}", deployed_version);
@@ -748,6 +969,23 @@ impl InfrastructureProvider for AwsLambdaProvider {
             {
                 self.configure_reserved_concurrency(reserved as i32).await?;
             }
+
+            // Publish and attach layers if configured
+            if !self.layer_configs.is_empty() {
+                tracing::info!("Publishing {} layers", self.layer_configs.len());
+                let layer_arns = self.publish_layers().await?;
+                self.update_function_layers(&layer_arns).await?;
+                self.wait_for_update(timeout).await?;
+            }
+
+            // Configure event source mappings if configured
+            if !self.event_source_configs.is_empty() {
+                tracing::info!(
+                    "Configuring {} event source mappings",
+                    self.event_source_configs.len()
+                );
+                self.configure_event_sources().await?;
+            }
         } else {
             tracing::info!("App-only mode: skipping infrastructure configuration");
         }
@@ -755,8 +993,8 @@ impl InfrastructureProvider for AwsLambdaProvider {
         let mode_msg = if is_app_only { " (app-only)" } else { "" };
 
         Ok(DeploymentResult::success(format!(
-            "Deployed {} to Lambda function {} (version: {}){}",
-            image, self.function_name, deployed_version, mode_msg
+            "Deployed {} ({}) to Lambda function {} (version: {}){}",
+            source_identifier, deployment_source, self.function_name, deployed_version, mode_msg
         ))
         .with_version(deployed_version))
     }

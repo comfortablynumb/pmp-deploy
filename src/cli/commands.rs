@@ -68,6 +68,13 @@ pub enum Commands {
 
     /// Start the web UI server
     Ui(UiArgs),
+
+    /// Resume an interrupted deployment
+    Resume(ResumeArgs),
+
+    /// Manage plugins
+    #[command(subcommand)]
+    Plugin(PluginCommands),
 }
 
 #[derive(Parser, Debug)]
@@ -144,13 +151,17 @@ pub struct LogsArgs {
 
 #[derive(Parser, Debug)]
 pub struct InitArgs {
-    /// Infrastructure type to initialize with
+    /// Infrastructure type to initialize with (skips interactive mode)
     #[arg(long)]
     pub infrastructure: Option<String>,
 
     /// Force overwrite existing config
     #[arg(long)]
     pub force: bool,
+
+    /// Skip interactive mode and use defaults
+    #[arg(long)]
+    pub non_interactive: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -256,4 +267,49 @@ pub struct ProvisionArgs {
     /// Override the image to deploy
     #[arg(long)]
     pub image: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+pub struct ResumeArgs {
+    /// The deployment ID to resume (omit to list resumable deployments)
+    pub deployment_id: Option<String>,
+
+    /// List all resumable deployments
+    #[arg(long)]
+    pub list: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Clear checkpoint without resuming
+    #[arg(long)]
+    pub clear: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginCommands {
+    /// Create a new plugin from template
+    New(PluginNewArgs),
+
+    /// List installed plugins
+    List,
+}
+
+#[derive(Parser, Debug)]
+pub struct PluginNewArgs {
+    /// Name of the plugin to create
+    pub name: String,
+
+    /// Output directory (defaults to current directory)
+    #[arg(short = 'd', long = "dir")]
+    pub output_dir: Option<PathBuf>,
+
+    /// Infrastructure type the plugin provides
+    #[arg(long, default_value = "custom")]
+    pub infrastructure_type: String,
+
+    /// Plugin description
+    #[arg(long)]
+    pub description: Option<String>,
 }

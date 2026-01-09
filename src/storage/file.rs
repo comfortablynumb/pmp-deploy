@@ -4,11 +4,12 @@
 
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
-use super::record::DeploymentRecord;
+use super::record::{DeploymentCheckpoint, DeploymentRecord};
 use super::traits::Storage;
 
 /// File-based storage implementation.
@@ -17,14 +18,18 @@ use super::traits::Storage;
 /// ```text
 /// <base_path>/
 /// ├── index.json           # Index of all deployments (for fast listing)
-/// └── deployments/
-///     ├── <id1>.json
-///     ├── <id2>.json
+/// ├── deployments/
+/// │   ├── <id1>.json
+/// │   ├── <id2>.json
+/// │   └── ...
+/// └── checkpoints/
+///     ├── <deployment_id1>.json
 ///     └── ...
 /// ```
 pub struct FileStorage {
     base_path: PathBuf,
     deployments_dir: PathBuf,
+    checkpoints_dir: PathBuf,
     index_path: PathBuf,
 }
 
@@ -46,10 +51,12 @@ impl FileStorage {
     /// Create a new file storage at the given path.
     pub async fn new(base_path: PathBuf) -> anyhow::Result<Self> {
         let deployments_dir = base_path.join("deployments");
+        let checkpoints_dir = base_path.join("checkpoints");
         let index_path = base_path.join("index.json");
 
         // Create directories if they don't exist
         fs::create_dir_all(&deployments_dir).await?;
+        fs::create_dir_all(&checkpoints_dir).await?;
 
         // Create index file if it doesn't exist
         if !index_path.exists() {
@@ -61,6 +68,7 @@ impl FileStorage {
         Ok(Self {
             base_path,
             deployments_dir,
+            checkpoints_dir,
             index_path,
         })
     }
@@ -76,6 +84,10 @@ impl FileStorage {
 
     fn deployment_path(&self, id: &str) -> PathBuf {
         self.deployments_dir.join(format!("{}.json", id))
+    }
+
+    fn checkpoint_path(&self, deployment_id: &str) -> PathBuf {
+        self.checkpoints_dir.join(format!("{}.json", deployment_id))
     }
 
     async fn load_index(&self) -> anyhow::Result<DeploymentIndex> {
@@ -256,6 +268,105 @@ impl Storage for FileStorage {
 
         Ok(())
     }
+
+    async fn save_checkpoint(&self, checkpoint: DeploymentCheckpoint) -> anyhow::Result<()> {
+        let path = self.checkpoint_path(&checkpoint.deployment_id);
+
+        let json = serde_json::to_string_pretty(&checkpoint)?;
+        let temp_path = path.with_extension("json.tmp");
+        let mut file = fs::File::create(&temp_path).await?;
+        file.write_all(json.as_bytes()).await?;
+        file.sync_all().await?;
+        fs::rename(&temp_path, &path).await?;
+
+        debug!(
+            "Saved checkpoint for {} to {}",
+            checkpoint.deployment_id,
+            path.display()
+        );
+        Ok(())
+    }
+
+    async fn get_checkpoint(&self, deployment_id: &str) -> anyhow::Result<Option<DeploymentCheckpoint>> {
+        let path = self.checkpoint_path(deployment_id);
+
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let contents = fs::read_to_string(&path).await?;
+        let checkpoint: DeploymentCheckpoint = serde_json::from_str(&contents)?;
+        Ok(Some(checkpoint))
+    }
+
+    async fn delete_checkpoint(&self, deployment_id: &str) -> anyhow::Result<bool> {
+        let path = self.checkpoint_path(deployment_id);
+
+        if !path.exists() {
+            return Ok(false);
+        }
+
+        fs::remove_file(&path).await?;
+        debug!("Deleted checkpoint for {}", deployment_id);
+        Ok(true)
+    }
+
+    async fn list_active_checkpoints(&self) -> anyhow::Result<Vec<DeploymentCheckpoint>> {
+        let mut checkpoints = Vec::new();
+
+        let mut entries = fs::read_dir(&self.checkpoints_dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+
+            if path.extension().map_or(false, |ext| ext == "json") {
+                match fs::read_to_string(&path).await {
+                    Ok(contents) => match serde_json::from_str::<DeploymentCheckpoint>(&contents) {
+                        Ok(checkpoint) if checkpoint.can_resume() => {
+                            checkpoints.push(checkpoint);
+                        }
+                        Ok(_) => {} // Completed checkpoint, skip
+                        Err(e) => {
+                            warn!("Failed to parse checkpoint {}: {}", path.display(), e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read checkpoint {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+
+        Ok(checkpoints)
+    }
+
+    async fn cleanup_checkpoints(&self, max_age_days: u32) -> anyhow::Result<usize> {
+        let max_age = Duration::from_secs(max_age_days as u64 * 24 * 60 * 60);
+        let mut removed = 0;
+
+        let mut entries = fs::read_dir(&self.checkpoints_dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+
+            if path.extension().map_or(false, |ext| ext == "json") {
+                if let Ok(contents) = fs::read_to_string(&path).await {
+                    if let Ok(checkpoint) = serde_json::from_str::<DeploymentCheckpoint>(&contents) {
+                        if checkpoint.age() > max_age {
+                            if let Err(e) = fs::remove_file(&path).await {
+                                warn!("Failed to delete checkpoint {}: {}", path.display(), e);
+                            } else {
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!("Cleaned up {} old checkpoints", removed);
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]
@@ -417,5 +528,81 @@ mod tests {
     async fn test_storage_name() {
         let (storage, _temp) = create_test_storage().await;
         assert_eq!(storage.name(), "file");
+    }
+
+    // ========== Checkpoint Tests ==========
+
+    #[tokio::test]
+    async fn test_save_and_get_checkpoint() {
+        let (storage, _temp) = create_test_storage().await;
+        let checkpoint = DeploymentCheckpoint::new("dep_123");
+
+        storage.save_checkpoint(checkpoint).await.unwrap();
+        let retrieved = storage.get_checkpoint("dep_123").await.unwrap();
+
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().deployment_id, "dep_123");
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_checkpoint() {
+        let (storage, _temp) = create_test_storage().await;
+        let result = storage.get_checkpoint("nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_checkpoint() {
+        let (storage, _temp) = create_test_storage().await;
+        let checkpoint = DeploymentCheckpoint::new("dep_123");
+
+        storage.save_checkpoint(checkpoint).await.unwrap();
+
+        let deleted = storage.delete_checkpoint("dep_123").await.unwrap();
+        assert!(deleted);
+
+        let retrieved = storage.get_checkpoint("dep_123").await.unwrap();
+        assert!(retrieved.is_none());
+
+        // Deleting again should return false
+        let deleted_again = storage.delete_checkpoint("dep_123").await.unwrap();
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn test_list_active_checkpoints() {
+        use super::super::record::DeploymentPhase;
+
+        let (storage, _temp) = create_test_storage().await;
+
+        // Active checkpoint
+        let active = DeploymentCheckpoint::new("dep_active");
+        storage.save_checkpoint(active).await.unwrap();
+
+        // Completed checkpoint
+        let mut completed = DeploymentCheckpoint::new("dep_completed");
+        completed.set_phase(DeploymentPhase::Completed);
+        storage.save_checkpoint(completed).await.unwrap();
+
+        let active_list = storage.list_active_checkpoints().await.unwrap();
+        assert_eq!(active_list.len(), 1);
+        assert_eq!(active_list[0].deployment_id, "dep_active");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_checkpoints() {
+        let (storage, _temp) = create_test_storage().await;
+
+        storage
+            .save_checkpoint(DeploymentCheckpoint::new("dep_123"))
+            .await
+            .unwrap();
+
+        // Cleanup with 0 days should remove all checkpoints
+        let removed = storage.cleanup_checkpoints(0).await.unwrap();
+        assert_eq!(removed, 1);
+
+        let active = storage.list_active_checkpoints().await.unwrap();
+        assert!(active.is_empty());
     }
 }

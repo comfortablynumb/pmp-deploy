@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::record::DeploymentRecord;
+use super::record::{DeploymentCheckpoint, DeploymentRecord};
 
 /// Storage trait for persisting deployment history and other data.
 ///
@@ -44,4 +44,25 @@ pub trait Storage: Send + Sync {
 
     /// Health check for the storage backend
     async fn health_check(&self) -> anyhow::Result<()>;
+
+    // ========== Checkpoint Methods ==========
+
+    /// Save or update a deployment checkpoint
+    async fn save_checkpoint(&self, checkpoint: DeploymentCheckpoint) -> anyhow::Result<()>;
+
+    /// Get checkpoint for a deployment
+    async fn get_checkpoint(&self, deployment_id: &str) -> anyhow::Result<Option<DeploymentCheckpoint>>;
+
+    /// Delete checkpoint (on success or explicit cleanup)
+    async fn delete_checkpoint(&self, deployment_id: &str) -> anyhow::Result<bool>;
+
+    /// List all active checkpoints (incomplete deployments)
+    async fn list_active_checkpoints(&self) -> anyhow::Result<Vec<DeploymentCheckpoint>>;
+
+    /// Cleanup old checkpoints (retention policy)
+    async fn cleanup_checkpoints(&self, max_age_days: u32) -> anyhow::Result<usize> {
+        // Default implementation: no-op for backwards compatibility
+        let _ = max_age_days;
+        Ok(0)
+    }
 }

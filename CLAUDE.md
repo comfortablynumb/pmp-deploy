@@ -16,11 +16,27 @@ pmp-deploy/
 │   ├── main.rs                    # CLI entry point
 │   ├── lib.rs                     # Library exports
 │   ├── cli/                       # Clap CLI definitions
+│   │   ├── commands.rs            # Command structs (InitArgs, DeployArgs, ResumeArgs, PluginNewArgs, etc.)
+│   │   ├── init/                  # Init command module
+│   │   │   ├── handler.rs         # Command handler
+│   │   │   └── wizard/            # Interactive wizard (types, prompter, flow, generator)
+│   │   ├── resume/                # Resume command module
+│   │   │   └── mod.rs             # Resume interrupted deployments
+│   │   └── plugin_template/       # Plugin template generator
+│   │       ├── mod.rs             # Plugin command handlers
+│   │       └── generator.rs       # PluginGenerator for scaffolding
 │   ├── config/                    # Config loading, schema, validation, env_vars
 │   ├── secrets/                   # Secrets providers (env, AWS SM, Vault)
 │   ├── infrastructure/            # Infrastructure providers (EKS, ECS, Lambda, K8s, Docker, Helm, Kustomize)
-│   │   └── provisioning/          # Full infrastructure provisioning (Lambda, ECS)
-│   ├── deployment/                # Deployment strategies (rolling-update, all-in)
+│   │   ├── provisioning/          # Full infrastructure provisioning (Lambda, ECS)
+│   │   ├── manifest.rs            # ManifestRenderer for template-based deployments (Tera)
+│   │   ├── k8s_resources.rs       # K8s ConfigMaps, Secrets, HPA, raw manifests
+│   │   └── lambda_extended.rs     # Lambda ZIP packaging, layers, event sources
+│   ├── deployment/                # Deployment strategies and checkpoint management
+│   │   ├── checkpoint.rs          # CheckpointManager for resumable deployments
+│   │   ├── executor.rs            # DeploymentExecutor with checkpoint integration
+│   │   ├── strategy.rs            # DeploymentStrategy trait, DeploymentType
+│   │   └── rolling.rs             # RollingUpdate strategy
 │   ├── metrics/                   # Metrics observation (CloudWatch, Prometheus)
 │   │   ├── provider.rs            # MetricsProvider trait, StandardMetric enum
 │   │   ├── resolver.rs            # MetricsResolver registry
@@ -35,9 +51,9 @@ pmp-deploy/
 │   │   ├── ecs.rs                 # AWS ECS task hooks
 │   │   ├── k8s.rs                 # Kubernetes Job hooks
 │   │   └── lambda.rs              # AWS Lambda invocation hooks
-│   ├── storage/                   # Storage abstraction for deployment history
-│   │   ├── traits.rs              # Storage trait
-│   │   ├── record.rs              # DeploymentRecord, DeploymentStatus
+│   ├── storage/                   # Storage abstraction for deployment history & checkpoints
+│   │   ├── traits.rs              # Storage trait (incl. checkpoint methods)
+│   │   ├── record.rs              # DeploymentRecord, DeploymentCheckpoint, DeploymentPhase
 │   │   ├── memory.rs              # In-memory storage
 │   │   ├── file.rs                # File-based JSON storage
 │   │   ├── sqlite.rs              # SQLite storage
@@ -72,20 +88,42 @@ pmp-deploy/
 - `HookExecutor`: Trait for hook types (Container, HTTP, ECS, K8s, Lambda)
 - `HookRunner`: Orchestrates hook execution with timeout handling
 - `HooksConfig`: Pre/post deployment hook configuration
-- `Storage`: Trait for deployment history persistence
-- `DeploymentRecord`, `DeploymentStatus`: Storage types
+- `Storage`: Trait for deployment history and checkpoint persistence
+- `DeploymentRecord`, `DeploymentStatus`: Deployment history types
+- `DeploymentCheckpoint`, `DeploymentPhase`, `DeployedResource`: Checkpoint types for resumable deployments
+- `CheckpointManager`, `CheckpointConfig`: Checkpoint lifecycle management
 - `StorageBackend`: Enum (Memory, File, Sqlite)
 - `StorageConfig`, `StorageFactory`: Storage configuration and creation
 - `FileStorage`, `SqliteStorage`, `InMemoryStorage`: Storage implementations
 - `SecretsProvider`, `SecretsResolver`: Secrets management
+- `ManifestRenderer`, `ManifestTemplateConfig`, `BuiltinVariables`: Template-based K8s deployments
+- `DeploymentMethod`: Enum (Direct, Helm, Kustomize, Template, RawManifest) - K8s deployment methods
+- `K8sConfigMapSpec`, `K8sSecretSpec`, `HpaConfig`: K8s resource specifications
+- `K8sResourceManager`, `RawManifestApplier`: K8s resource management
+- `ZipPackageConfig`, `LambdaPackager`: Lambda ZIP deployment
+- `LayerConfig`, `LayerManager`: Lambda layer management
+- `EventSourceConfig`, `EventSourceManager`, `EventSourceType`: Lambda event source mappings
+- `PluginGenerator`: Plugin template generator for scaffolding new plugins
 
 ## Commands
 - `deploy <env>` (with `--skip-hooks`, `--skip-pre-hooks`, `--skip-post-hooks`)
 - `status <env>`, `rollback <env>`, `logs <env>`
 - `provision <env>`: Create/update infrastructure
 - `hooks list|run <env> [hook-name]`: Manage and run hooks
-- `list`, `validate`, `init`
+- `resume [deployment-id]`: Resume interrupted deployment
+  - `--list`: List resumable deployments
+  - `--clear`: Clear checkpoint without resuming
+- `list`, `validate`
+- `init`: Interactive wizard to create config (select envs, infra, deploy mode)
+  - `--infrastructure <type>`: Skip wizard, use template
+  - `--non-interactive`: Skip wizard, use defaults
+  - `--force`: Overwrite existing config
 - `projects list|add|remove`
+- `plugin new|list`: Create and manage plugins
+  - `new <name>`: Create plugin from template
+  - `--dir <path>`: Output directory
+  - `--infrastructure-type <type>`: Infrastructure type (default: custom)
+  - `list`: List installed plugins
 - `ui`: Web UI with metrics visualization
 
 ## Plugin System

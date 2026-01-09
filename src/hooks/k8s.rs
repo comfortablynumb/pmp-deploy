@@ -110,14 +110,14 @@ mod inner {
                 .filter_map(|source| match source {
                     crate::hooks::types::EnvFromSource::ConfigMap(name) => Some(EnvFromSource {
                         config_map_ref: Some(k8s_openapi::api::core::v1::ConfigMapEnvSource {
-                            name: Some(name.clone()),
+                            name: name.clone(),
                             optional: Some(false),
                         }),
                         ..Default::default()
                     }),
                     crate::hooks::types::EnvFromSource::Secret(name) => Some(EnvFromSource {
                         secret_ref: Some(SecretEnvSource {
-                            name: Some(name.clone()),
+                            name: name.clone(),
                             optional: Some(false),
                         }),
                         ..Default::default()
@@ -190,8 +190,8 @@ mod inner {
                 container.args = Some(config.args.clone());
             }
 
-            // Build labels
-            let mut labels = config.labels.clone();
+            // Build labels (convert HashMap to BTreeMap)
+            let mut labels: BTreeMap<String, String> = config.labels.clone().into_iter().collect();
             labels.insert(
                 "app.kubernetes.io/managed-by".to_string(),
                 "pmp-deploy".to_string(),
@@ -202,11 +202,11 @@ mod inner {
                 context.environment.clone(),
             );
 
-            // Build annotations
-            let annotations = if config.annotations.is_empty() {
+            // Build annotations (convert HashMap to BTreeMap)
+            let annotations: Option<BTreeMap<String, String>> = if config.annotations.is_empty() {
                 None
             } else {
-                Some(config.annotations.clone())
+                Some(config.annotations.clone().into_iter().collect())
             };
 
             // Build Pod spec

@@ -53,6 +53,22 @@ cargo build --release --features kubernetes
 pmp-deploy init
 ```
 
+This launches an interactive wizard that guides you through:
+1. Selecting environments (development, staging, production, or custom)
+2. Choosing infrastructure type for each environment
+3. Selecting deploy mode (Full to create infrastructure, AppOnly to use existing)
+4. Providing connection details for existing infrastructure
+
+For non-interactive initialization:
+
+```bash
+# Use a specific infrastructure template
+pmp-deploy init --infrastructure aws-eks
+
+# Use defaults without prompts
+pmp-deploy init --non-interactive
+```
+
 This creates a `.pmp-deploy.yaml` file in the current directory.
 
 ### Configure your deployment
@@ -95,7 +111,7 @@ pmp-deploy deploy development
 | `pmp-deploy hooks run <env> [hook]` | Run specific or all hooks |
 | `pmp-deploy list` | List available environments |
 | `pmp-deploy validate` | Validate configuration file |
-| `pmp-deploy init` | Initialize a new configuration file |
+| `pmp-deploy init` | Initialize configuration with interactive wizard |
 | `pmp-deploy projects list` | List all configured projects |
 | `pmp-deploy projects add` | Add a project to global configuration |
 | `pmp-deploy projects remove` | Remove a project from global configuration |
@@ -109,6 +125,28 @@ pmp-deploy deploy development
 | `-v, --verbose` | Enable verbose output |
 | `-q, --quiet` | Suppress all output except errors |
 | `--output <format>` | Output format: text, json |
+
+## Init Command Options
+
+| Flag | Description |
+|------|-------------|
+| `--infrastructure <type>` | Skip wizard, use template (docker-compose, aws-eks, aws-ecs, aws-lambda, kubernetes) |
+| `--non-interactive` | Skip interactive wizard and use defaults |
+| `--force` | Overwrite existing configuration file |
+
+### Init Wizard Flow
+
+The interactive wizard walks you through:
+
+1. **Environment Selection**: Multi-select from predefined environments (development, staging, production) or add custom names
+2. **Infrastructure Type**: Choose infrastructure for each environment (Docker Compose, AWS EKS, AWS ECS, AWS Lambda, Kubernetes)
+3. **Deploy Mode**: Select Full (create infrastructure) or AppOnly (use existing)
+4. **Connection Details** (AppOnly mode): Provide infrastructure-specific details:
+   - Docker Compose: compose file path, project name
+   - AWS EKS: cluster name, region, namespace
+   - AWS ECS: cluster name, region, launch type
+   - AWS Lambda: region, function name prefix
+   - Kubernetes: context, namespace
 
 ## Deploy Command Options
 

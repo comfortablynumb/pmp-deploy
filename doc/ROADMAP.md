@@ -105,7 +105,7 @@ infrastructure:
 - [x] Generate kubeconfig from EKS cluster details (via `aws eks update-kubeconfig`)
 - [x] Support for Helm charts via `helm` subprocess (see Milestone 10)
 - [x] Kustomize support (see Milestone 10)
-- [ ] Manifest templating (Kubernetes YAML with variable substitution)
+- [x] Manifest templating with Tera (see Milestone 19)
 
 **Files**: `src/infrastructure/aws_eks.rs`
 
@@ -167,13 +167,13 @@ infrastructure:
 - [x] AWS SDK for Rust (`aws-sdk-lambda`)
 - [x] Container image support (ECR)
 - [x] Function versioning and alias management
-- [ ] ZIP packaging for deployment artifacts
-- [ ] Environment variable configuration
-- [ ] Layer management for shared dependencies
-- [ ] Event source mappings (SQS, SNS, API Gateway, etc.)
-- [ ] Provisioned concurrency configuration
+- [x] ZIP packaging for deployment artifacts (see Milestone 20)
+- [x] Environment variable configuration
+- [x] Layer management for shared dependencies (see Milestone 20)
+- [x] Event source mappings (SQS, SNS, Kinesis, DynamoDB, Kafka, etc.) (see Milestone 20)
+- [x] Provisioned concurrency configuration
 
-**Files**: `src/infrastructure/aws_lambda.rs`
+**Files**: `src/infrastructure/aws_lambda.rs`, `src/infrastructure/lambda_extended.rs`
 
 ### 3.4 Kubernetes (Generic)
 **Description**: Self-hosted or cloud-agnostic Kubernetes clusters
@@ -203,11 +203,12 @@ infrastructure:
 - [x] Wait for rollout completion
 - [x] Helm chart deployment support (see Milestone 10)
 - [x] Kustomize support (see Milestone 10)
-- [ ] Raw manifest application
-- [ ] ConfigMap and Secret management
-- [ ] Horizontal Pod Autoscaler configuration
+- [x] Raw manifest application (see Milestone 19)
+- [x] ConfigMap and Secret management (see Milestone 19)
+- [x] Horizontal Pod Autoscaler configuration (see Milestone 19)
+- [x] Manifest templating with Tera (see Milestone 19)
 
-**Files**: `src/infrastructure/kubernetes.rs`, `src/infrastructure/helm.rs`, `src/infrastructure/kustomize.rs`
+**Files**: `src/infrastructure/kubernetes.rs`, `src/infrastructure/helm.rs`, `src/infrastructure/kustomize.rs`, `src/infrastructure/k8s_resources.rs`, `src/infrastructure/manifest.rs`
 
 ### 3.5 Docker Compose (Local/Simple)
 **Description**: For local development and simple single-server deployments
@@ -306,7 +307,7 @@ environments:
 - [x] `declare_plugin!` macro for easy plugin creation
 - [x] `InfrastructurePlugin` trait with all required methods
 - [x] Example plugin implementation (`examples/plugins/echo-plugin`)
-- [ ] Plugin template generator (future enhancement)
+- [x] Plugin template generator (see Milestone 21)
 
 **SDK Location**: `crates/pmp-deploy-plugin-sdk/`
 
@@ -354,9 +355,27 @@ pmp-deploy rollback <environment>    Rollback to previous version
 pmp-deploy logs <environment>        Stream/fetch logs
 pmp-deploy list                      List available environments
 pmp-deploy validate                  Validate configuration file
-pmp-deploy init                      Initialize new config file
+pmp-deploy init                      Interactive wizard to configure project
 ```
 **Status**: All core commands fully integrated with infrastructure providers
+
+### 6.1.1 Init Command Interactive Wizard [COMPLETED]
+- [x] Interactive environment selection (development, staging, production, custom)
+- [x] Infrastructure type selection per environment
+- [x] Deploy mode selection (Full: create infrastructure, AppOnly: use existing)
+- [x] Connection details prompts for AppOnly mode:
+  - Docker Compose: compose_file, project_name
+  - AWS EKS: cluster_name, region, namespace
+  - AWS ECS: cluster, region, launch_type
+  - AWS Lambda: region, function_name_prefix
+  - Kubernetes: context, namespace
+- [x] `--infrastructure <type>` flag to skip wizard with template
+- [x] `--non-interactive` flag to skip wizard with defaults
+- [x] `--force` flag to overwrite existing config
+- [x] `Prompter` trait for testable prompts (DialoguerPrompter implementation)
+- [x] Unit tests with MockPrompter
+
+**Files**: `src/cli/init/handler.rs`, `src/cli/init/wizard/` (types.rs, prompter.rs, flow.rs, generator.rs)
 
 ### 6.2 Multi-Project Support
 ```
@@ -465,7 +484,7 @@ GET  /api/projects/{id}/environments/{env}/logs     Stream logs (SSE)
   - `SignalHandler` with Ctrl+C and SIGTERM support
   - `InterruptibleContext` for async operation interruption
   - `check_interrupt!` macro for loop interruption
-- [ ] State recovery for interrupted deployments (future)
+- [x] State recovery for interrupted deployments (see Milestone 18)
 
 ### 9.2 Observability
 - [x] Structured logging (`src/logging.rs`)
@@ -1396,6 +1415,479 @@ storage:
 - [x] All existing tests continue to pass
 
 **Test Count**: 219 lib tests passing (+45 storage tests)
+
+---
+
+## Milestone 18: State Recovery for Interrupted Deployments [COMPLETED]
+
+### 18.1 Overview
+Enable resumption of interrupted deployments through checkpoint persistence, allowing deployments to continue from where they left off after Ctrl+C or system failures.
+
+### 18.2 Checkpoint Data Model
+- [x] `DeploymentPhase` enum for tracking deployment progress:
+  - PreHooks, InfrastructureProvisioning, AppDeployment, HealthCheck, PostHooks, Completed
+  - `ordinal()` method for phase comparison
+  - `next()` for phase advancement
+- [x] `DeployedResource` struct for tracking deployed resources:
+  - Resource type, name, namespace
+  - Timestamp and metadata
+- [x] `DeploymentCheckpoint` struct:
+  - Deployment ID and current phase
+  - Completed phases list
+  - Deployed resources list
+  - Pre/post hooks completed
+  - Context snapshot (JSON) for resumption
+  - Error message if failed
+
+**Files**: `src/storage/record.rs`
+
+### 18.3 Storage Trait Extension
+- [x] Extended `Storage` trait with checkpoint methods:
+  - `save_checkpoint()` - Persist checkpoint state
+  - `get_checkpoint()` - Retrieve checkpoint by deployment ID
+  - `delete_checkpoint()` - Remove checkpoint (on completion)
+  - `list_active_checkpoints()` - List resumable deployments
+  - `cleanup_checkpoints()` - Remove old checkpoints
+
+**Files**: `src/storage/traits.rs`
+
+### 18.4 Storage Backend Implementation
+- [x] **InMemoryStorage**: HashMap-based checkpoint storage
+- [x] **FileStorage**: JSON files in `<base_path>/checkpoints/` directory
+- [x] **SqliteStorage**: `checkpoints` table with proper indexes
+
+**Files**: `src/storage/memory.rs`, `src/storage/file.rs`, `src/storage/sqlite.rs`
+
+### 18.5 CheckpointManager
+- [x] `CheckpointManager` for checkpoint lifecycle management:
+  - Create checkpoints at deployment start
+  - Update checkpoints as phases complete
+  - Save on interrupt (SIGINT/SIGTERM)
+  - Clear on successful completion
+- [x] `CheckpointConfig` for enabling/disabling checkpoints
+- [x] `InterruptedError` for interrupt handling
+- [x] Signal handler integration for automatic checkpoint save
+
+**Files**: `src/deployment/checkpoint.rs`
+
+### 18.6 Executor Integration
+- [x] `HookExecutionConfig` for selective hook execution
+- [x] `DeploymentExecutor.execute_with_hooks()` - Phased execution with checkpoints
+- [x] `DeploymentExecutor.resume_from_checkpoint()` - Resume interrupted deployment
+- [x] Phase-aware execution:
+  - Skip completed phases on resume
+  - Skip completed hooks on resume
+  - Track deployed resources
+
+**Files**: `src/deployment/executor.rs`, `src/deployment/mod.rs`
+
+### 18.7 CLI Integration
+- [x] `pmp-deploy resume <deployment-id>` - Resume interrupted deployment
+- [x] `pmp-deploy resume --list` - List resumable deployments
+- [x] `pmp-deploy resume --clear <id>` - Clear checkpoint without resuming
+- [x] `-y` flag to skip confirmation
+
+**Files**: `src/cli/commands.rs`, `src/cli/resume/mod.rs`, `src/main.rs`
+
+### 18.8 Usage Example
+```bash
+# Start a deployment, interrupt with Ctrl+C
+pmp-deploy deploy production
+^C  # Checkpoint saved automatically
+
+# List resumable deployments
+pmp-deploy resume --list
+# Output:
+# Resumable deployments:
+#   ID: dep_production_1704672000000
+#     Phase: app_deployment
+#     Completed phases: pre_hooks
+#     Resources deployed: 2
+#     Last updated: ...
+
+# Resume the deployment
+pmp-deploy resume dep_production_1704672000000
+```
+
+### 18.9 Tests
+- [x] Checkpoint type tests in `src/storage/record.rs`
+- [x] Storage backend checkpoint tests (Memory, File, SQLite)
+- [x] CheckpointManager tests in `src/deployment/checkpoint.rs`
+- [x] Resume CLI tests in `src/cli/resume/mod.rs`
+
+**Test Count**: 355 tests passing
+
+---
+
+## Milestone 19: Kubernetes Extended Features [COMPLETED]
+
+### 19.1 Overview
+Extended Kubernetes deployment options including manifest templating, raw manifest application, ConfigMap/Secret management, and Horizontal Pod Autoscaler (HPA) configuration.
+
+### 19.2 Manifest Templating
+- [x] `ManifestTemplateConfig` for template configuration:
+  - Template path (file or directory)
+  - Custom variables map
+  - Environment variable inclusion with optional prefix
+- [x] `BuiltinVariables` for standard template variables:
+  - `IMAGE`, `IMAGE_TAG`, `NAMESPACE`, `ENVIRONMENT`, `DEPLOYMENT_NAME`
+- [x] `ManifestRenderer` using Tera template engine:
+  - Single file or directory pattern support
+  - `render_all()` for batch rendering
+  - Variable substitution from config, environment, and builtins
+- [x] `RenderedManifest` with multi-document YAML parsing
+
+**Files**: `src/infrastructure/manifest.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  k8s-template:
+    type: kubernetes
+    config:
+      namespace: production
+      deployment_method: template
+      manifest_template:
+        path: ./k8s/templates
+        variables:
+          REPLICAS: "3"
+          LOG_LEVEL: info
+        include_env: true
+        env_prefix: APP_
+```
+
+### 19.3 Raw Manifest Application
+- [x] `RawManifestConfig` for raw manifest configuration:
+  - File list (files and/or directories)
+  - Recursive flag for directory traversal
+  - Prune support with label selector
+- [x] `RawManifestApplier` for kubectl operations:
+  - `apply()` for file-based manifests
+  - `apply_content()` for rendered content (stdin pipe)
+  - `diff()` for dry-run comparison
+  - Namespace and context support
+
+**Files**: `src/infrastructure/k8s_resources.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  k8s-raw:
+    type: kubernetes
+    config:
+      namespace: production
+      deployment_method: raw_manifest
+      raw_manifests:
+        files:
+          - ./k8s/deployment.yaml
+          - ./k8s/service.yaml
+        recursive: true
+        prune: true
+        prune_selector: app=myapp
+```
+
+### 19.4 ConfigMap and Secret Management
+- [x] `K8sConfigMapSpec` for ConfigMap creation:
+  - Name, namespace, data, binary_data
+  - File loading support (`data_from_files`)
+  - Labels and annotations
+- [x] `K8sSecretSpec` for Secret creation:
+  - Name, namespace, secret type
+  - Data with `EnvVarConfig` for flexible sources (static, env, AWS SM, Vault)
+  - String data (auto base64 encoded)
+  - Labels and annotations
+- [x] `K8sResourceManager` for resource operations:
+  - `apply_config_map()` - Create/update ConfigMaps
+  - `apply_secret()` - Create/update Secrets with resolved values
+  - Delete operations for cleanup
+- [x] Pre-deployment application (ConfigMaps/Secrets applied BEFORE deployment)
+- [x] Secret resolution via `EnvVarResolver`
+
+**Files**: `src/infrastructure/k8s_resources.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  k8s-prod:
+    type: kubernetes
+    config:
+      namespace: production
+      config_maps:
+        - name: app-config
+          data:
+            LOG_LEVEL: info
+            API_URL: https://api.example.com
+          labels:
+            app: my-app
+
+      secrets:
+        - name: db-credentials
+          secret_type: Opaque
+          data:
+            password:
+              source: aws_secrets_manager
+              arn: arn:aws:secretsmanager:us-east-1:123456789:secret:prod/db
+              json_field: password
+          string_data:
+            username: admin
+```
+
+### 19.5 Horizontal Pod Autoscaler (HPA)
+- [x] `HpaConfig` for HPA configuration:
+  - Target deployment name
+  - Min/max replicas
+  - Target CPU/memory utilization percentages
+  - Custom metrics support
+  - Scale down/up stabilization windows
+- [x] `HpaCustomMetric` for custom scaling metrics
+- [x] HPA applied AFTER deployment completes
+- [x] kube-rs HPA resource creation/update
+
+**Files**: `src/infrastructure/k8s_resources.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  k8s-prod:
+    type: kubernetes
+    config:
+      namespace: production
+      hpa:
+        target_deployment: my-app
+        min_replicas: 2
+        max_replicas: 20
+        target_cpu_utilization: 70
+        target_memory_utilization: 80
+        scale_down_stabilization_secs: 300
+```
+
+### 19.6 Deployment Method Enum
+- [x] Extended `DeploymentMethod` enum:
+  - `Direct` - Direct image patch (default)
+  - `Helm` - Helm chart deployment
+  - `Kustomize` - Kustomize overlay deployment
+  - `Template` - Tera template rendering
+  - `RawManifest` - Raw YAML file application
+- [x] Automatic detection from configuration
+- [x] Explicit override via `deployment_method` config key
+
+### 19.7 Integration Flow
+1. Parse extended config (manifest_template, raw_manifests, config_maps, secrets, hpa)
+2. Apply ConfigMaps and Secrets (pre-deployment)
+3. Deploy using selected method (Direct, Helm, Kustomize, Template, RawManifest)
+4. Apply HPA (post-deployment)
+
+### 19.8 Tests
+- [x] ManifestRenderer tests in `src/infrastructure/manifest.rs`
+- [x] K8sResourceManager tests in `src/infrastructure/k8s_resources.rs`
+- [x] KubernetesProvider extended config tests
+- [x] DeploymentMethod parsing tests
+
+**Test Count**: 90 tests passing (with kubernetes feature)
+
+---
+
+## Milestone 20: AWS Lambda Extended Features [COMPLETED]
+
+### 20.1 Overview
+Extended Lambda deployment options including ZIP packaging, layer management, and event source mappings for triggers.
+
+### 20.2 ZIP Packaging
+- [x] `ZipPackageConfig` for package configuration:
+  - Source path (file or directory)
+  - S3 bucket and prefix for large packages (>50MB)
+  - Exclude patterns for files/directories
+  - Hidden file handling
+- [x] `LambdaPackager` for ZIP creation:
+  - `create_zip()` - Create ZIP from source
+  - `upload_to_s3()` - Upload to S3 for large packages
+  - Automatic file/directory handling
+  - Pattern-based exclusions
+- [x] Direct ZIP deployment (up to 50MB)
+- [x] S3-based ZIP deployment (unlimited size)
+
+**Files**: `src/infrastructure/lambda_extended.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  lambda-zip:
+    type: aws-lambda
+    config:
+      function_name: my-function
+      region: us-east-1
+      zip_package:
+        source_path: ./dist
+        s3_bucket: my-lambda-artifacts
+        s3_prefix: deployments
+        exclude:
+          - "*.pyc"
+          - "__pycache__"
+          - ".git"
+        include_hidden: false
+```
+
+### 20.3 Layer Management
+- [x] `LayerConfig` for layer configuration:
+  - Layer name and description
+  - Source path or S3 location
+  - Compatible runtimes (python3.9, nodejs18.x, etc.)
+  - Compatible architectures (x86_64, arm64)
+  - License information
+- [x] `LayerManager` for layer operations:
+  - `publish_layer()` - Publish new layer version
+  - `list_layer_versions()` - List all versions
+  - `cleanup_old_versions()` - Delete old versions (keep N most recent)
+  - `get_latest_version_arn()` - Get latest version ARN
+- [x] Layer publishing and function attachment
+- [x] Layer version cleanup
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  lambda-with-layers:
+    type: aws-lambda
+    config:
+      function_name: my-function
+      region: us-east-1
+      layers:
+        - name: common-deps
+          description: Shared Python dependencies
+          source_path: ./layers/common
+          compatible_runtimes:
+            - python3.9
+            - python3.10
+          compatible_architectures:
+            - x86_64
+        - name: utils-layer
+          s3_bucket: my-layers
+          s3_key: utils/v1.0.0.zip
+```
+
+### 20.4 Event Source Mappings
+- [x] `EventSourceType` enum supporting:
+  - SQS queues
+  - SNS topics (via SQS subscription)
+  - DynamoDB Streams
+  - Kinesis Streams
+  - Apache Kafka (self-managed)
+  - Amazon MSK (Managed Kafka)
+  - ActiveMQ
+  - RabbitMQ
+- [x] `EventSourceConfig` for mapping configuration:
+  - Source type and ARN
+  - Batch size and batching window
+  - Starting position (for streams)
+  - Filter patterns (event filtering)
+  - Retry configuration
+  - Parallelization factor
+  - On-failure destinations
+  - Source access (for Kafka/MQ)
+- [x] `EventSourceManager` for mapping operations:
+  - `configure_event_source()` - Create or update mapping
+  - `list_event_sources()` - List all mappings
+  - `delete_event_source()` - Delete mapping
+  - `delete_all_event_sources()` - Cleanup
+
+**Files**: `src/infrastructure/lambda_extended.rs`
+
+**Configuration Example**:
+```yaml
+infrastructure:
+  lambda-triggered:
+    type: aws-lambda
+    config:
+      function_name: my-processor
+      region: us-east-1
+      event_sources:
+        - source_type: sqs
+          source_arn: arn:aws:sqs:us-east-1:123456789:orders-queue
+          batch_size: 10
+          maximum_batching_window_secs: 30
+          filter_patterns:
+            - '{"body": {"type": ["order"]}}'
+
+        - source_type: kinesis_stream
+          source_arn: arn:aws:kinesis:us-east-1:123456789:stream/events
+          batch_size: 100
+          starting_position: LATEST
+          parallelization_factor: 2
+          maximum_record_age_secs: 3600
+          maximum_retry_attempts: 3
+          on_failure_destination_arn: arn:aws:sqs:us-east-1:123456789:dlq
+```
+
+### 20.5 Integration with Deploy Flow
+- [x] ZIP or container image deployment (auto-detected from config)
+- [x] Layer publishing in full deployment mode
+- [x] Event source configuration in full deployment mode
+- [x] App-only mode skips infrastructure changes (layers, event sources)
+
+### 20.6 Tests
+- [x] ZipPackageConfig parsing tests
+- [x] LayerConfig parsing tests
+- [x] EventSourceConfig parsing tests
+- [x] EventSourceType tests
+
+**Test Count**: 77 tests passing
+
+---
+
+## Milestone 21: Plugin Template Generator [COMPLETED]
+
+### 21.1 Overview
+CLI command to scaffold new plugins with all necessary files and boilerplate code, making it easy to create custom infrastructure plugins.
+
+### 21.2 CLI Commands
+- [x] `pmp-deploy plugin new <name>` - Create plugin in current directory
+- [x] `pmp-deploy plugin new <name> --dir <path>` - Create plugin in specified directory
+- [x] `pmp-deploy plugin new <name> --infrastructure-type <type>` - Set infrastructure type (default: custom)
+- [x] `pmp-deploy plugin new <name> --description <desc>` - Set plugin description
+- [x] `pmp-deploy plugin list` - List installed plugins
+
+**Files**: `src/cli/commands.rs`, `src/cli/plugin_template/mod.rs`, `src/cli/plugin_template/generator.rs`
+
+### 21.3 Generated Files
+- [x] `Cargo.toml` - Project configuration with SDK dependency, cdylib crate type
+- [x] `src/lib.rs` - Plugin struct with `InfrastructurePlugin` trait implementation stubs
+- [x] `README.md` - Build and installation instructions
+
+### 21.4 Template Features
+- [x] `PluginGenerator` struct for scaffolding:
+  - PascalCase struct name generation from kebab-case plugin name
+  - Crate naming convention: `pmp-deploy-{name}-plugin`
+  - Platform-specific library names (.dll, .so, .dylib)
+- [x] Generated `lib.rs` includes:
+  - All trait method implementations with TODO stubs
+  - `declare_plugin!` macro invocation
+  - Unit tests for validation and dry-run
+- [x] Generated `README.md` includes:
+  - Build instructions
+  - Installation paths for Windows/Linux/macOS
+  - Configuration example for pmp-deploy.yaml
+
+### 21.5 Usage Example
+```bash
+# Create a new plugin for custom cloud provider
+pmp-deploy plugin new my-cloud --infrastructure-type my-cloud --description "My Cloud infrastructure plugin"
+
+# Output:
+# Created plugin 'my-cloud' successfully!
+#
+# Next steps:
+#   1. cd my-cloud
+#   2. cargo build --release
+#   3. Copy target/release/pmp-deploy-my_cloud-plugin.dll (Windows) or libpmp-deploy-my_cloud-plugin.so (Linux) to ~/.pmp-deploy/plugins/
+#
+# Then use infrastructure type 'my-cloud' in your pmp-deploy.yaml.
+
+# List installed plugins
+pmp-deploy plugin list
+```
+
+### 21.6 Tests
+- [x] `test_to_pascal_case()` - PascalCase conversion
+- [x] `test_crate_name()` - Crate naming convention
 
 ---
 

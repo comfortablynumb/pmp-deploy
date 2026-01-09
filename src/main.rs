@@ -3,7 +3,7 @@ use dialoguer::{Confirm, Select};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use pmp_deploy::cli::{Cli, Commands, HooksCommands, OutputFormat, ProjectsCommands};
+use pmp_deploy::cli::{Cli, Commands, HooksCommands, OutputFormat, PluginCommands, ProjectsCommands};
 use pmp_deploy::config::{ConfigLoader, ConfigValidator, EnvironmentConfig};
 use pmp_deploy::infrastructure::{DeployMode, DeploymentContext, ProviderFactory};
 use pmp_deploy::ui::{start_server, start_server_https, generate_dev_certificate};
@@ -66,11 +66,20 @@ async fn run_command(command: Commands, ctx: CliContext) -> anyhow::Result<()> {
         Commands::Logs(args) => cmd_logs(args, &ctx).await,
         Commands::List => cmd_list(&ctx).await,
         Commands::Validate => cmd_validate(&ctx).await,
-        Commands::Init(args) => cmd_init(args, &ctx).await,
+        Commands::Init(args) => pmp_deploy::cli::init::execute(args).await,
         Commands::Provision(args) => cmd_provision(args, &ctx).await,
         Commands::Projects(subcmd) => cmd_projects(subcmd, &ctx).await,
         Commands::Hooks(subcmd) => cmd_hooks(subcmd, &ctx).await,
         Commands::Ui(args) => cmd_ui(args).await,
+        Commands::Resume(args) => pmp_deploy::cli::resume::execute(args).await,
+        Commands::Plugin(subcmd) => cmd_plugin(subcmd).await,
+    }
+}
+
+async fn cmd_plugin(subcmd: PluginCommands) -> anyhow::Result<()> {
+    match subcmd {
+        PluginCommands::New(args) => pmp_deploy::cli::plugin_template::handle_new(&args).await,
+        PluginCommands::List => pmp_deploy::cli::plugin_template::handle_list().await,
     }
 }
 
@@ -596,100 +605,6 @@ async fn cmd_provision(
     }
 
     Ok(())
-}
-
-async fn cmd_init(
-    args: pmp_deploy::cli::InitArgs,
-    _ctx: &CliContext,
-) -> anyhow::Result<()> {
-    let config_path = std::env::current_dir()?.join(".pmp-deploy.yaml");
-
-    if config_path.exists() && !args.force {
-        anyhow::bail!(
-            "Configuration file already exists. Use --force to overwrite."
-        );
-    }
-
-    let infra_type = args.infrastructure.as_deref().unwrap_or("docker-compose");
-
-    let template = generate_config_template(infra_type);
-
-    std::fs::write(&config_path, template)?;
-    println!("Created configuration file: {}", config_path.display());
-
-    Ok(())
-}
-
-fn generate_config_template(infra_type: &str) -> String {
-    match infra_type {
-        "aws-eks" => r#"# pmp-deploy configuration
-infrastructure:
-  aws-dev:
-    type: aws-eks
-    config:
-      cluster_name: my-cluster
-      region: us-east-1
-      namespace: default
-
-environments:
-  development:
-    infrastructure: aws-dev
-    deployment_type: rolling-update
-    image: my-app:latest
-    replicas: 2
-"#
-        .to_string(),
-
-        "aws-ecs" => r#"# pmp-deploy configuration
-infrastructure:
-  aws-dev:
-    type: aws-ecs
-    config:
-      cluster: my-cluster
-      region: us-east-1
-      launch_type: FARGATE
-
-environments:
-  development:
-    infrastructure: aws-dev
-    deployment_type: rolling-update
-    image: my-app:latest
-"#
-        .to_string(),
-
-        "kubernetes" => r#"# pmp-deploy configuration
-infrastructure:
-  k8s-local:
-    type: kubernetes
-    config:
-      context: my-context
-      namespace: default
-
-environments:
-  development:
-    infrastructure: k8s-local
-    deployment_type: rolling-update
-    image: my-app:latest
-    replicas: 2
-"#
-        .to_string(),
-
-        _ => r#"# pmp-deploy configuration
-infrastructure:
-  local:
-    type: docker-compose
-    config:
-      compose_file: docker-compose.yml
-      project_name: my-app
-
-environments:
-  development:
-    infrastructure: local
-    deployment_type: all-in
-    image: my-app:latest
-"#
-        .to_string(),
-    }
 }
 
 async fn cmd_projects(subcmd: ProjectsCommands, _ctx: &CliContext) -> anyhow::Result<()> {

@@ -3,19 +3,21 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Duration;
 
-use super::record::DeploymentRecord;
+use super::record::{DeploymentCheckpoint, DeploymentRecord};
 use super::traits::Storage;
 
 /// In-memory storage implementation for deployment history.
 /// Useful for development, testing, and single-instance deployments.
 pub struct InMemoryStorage {
     records: RwLock<HashMap<String, DeploymentRecord>>,
+    checkpoints: RwLock<HashMap<String, DeploymentCheckpoint>>,
 }
 
 impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
             records: RwLock::new(HashMap::new()),
+            checkpoints: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -93,6 +95,55 @@ impl Storage for InMemoryStorage {
             anyhow::anyhow!("Storage health check failed: {}", e)
         })?;
         Ok(())
+    }
+
+    async fn save_checkpoint(&self, checkpoint: DeploymentCheckpoint) -> anyhow::Result<()> {
+        let mut checkpoints = self.checkpoints.write().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire write lock: {}", e)
+        })?;
+        checkpoints.insert(checkpoint.deployment_id.clone(), checkpoint);
+        Ok(())
+    }
+
+    async fn get_checkpoint(&self, deployment_id: &str) -> anyhow::Result<Option<DeploymentCheckpoint>> {
+        let checkpoints = self.checkpoints.read().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire read lock: {}", e)
+        })?;
+        Ok(checkpoints.get(deployment_id).cloned())
+    }
+
+    async fn delete_checkpoint(&self, deployment_id: &str) -> anyhow::Result<bool> {
+        let mut checkpoints = self.checkpoints.write().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire write lock: {}", e)
+        })?;
+        Ok(checkpoints.remove(deployment_id).is_some())
+    }
+
+    async fn list_active_checkpoints(&self) -> anyhow::Result<Vec<DeploymentCheckpoint>> {
+        let checkpoints = self.checkpoints.read().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire read lock: {}", e)
+        })?;
+
+        let active: Vec<_> = checkpoints
+            .values()
+            .filter(|c| c.can_resume())
+            .cloned()
+            .collect();
+
+        Ok(active)
+    }
+
+    async fn cleanup_checkpoints(&self, max_age_days: u32) -> anyhow::Result<usize> {
+        let max_age = Duration::from_secs(max_age_days as u64 * 24 * 60 * 60);
+        let mut checkpoints = self.checkpoints.write().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire write lock: {}", e)
+        })?;
+
+        let before_count = checkpoints.len();
+        checkpoints.retain(|_, c| c.age() < max_age);
+        let removed = before_count - checkpoints.len();
+
+        Ok(removed)
     }
 }
 
@@ -283,5 +334,99 @@ mod tests {
         ));
         assert!(!filter_matches(&record, Some("other-project"), None));
         assert!(!filter_matches(&record, None, Some("staging")));
+    }
+
+    // ========== Checkpoint Tests ==========
+
+    #[tokio::test]
+    async fn test_save_and_get_checkpoint() {
+        let storage = InMemoryStorage::new();
+        let checkpoint = DeploymentCheckpoint::new("dep_123");
+
+        storage.save_checkpoint(checkpoint).await.unwrap();
+        let retrieved = storage.get_checkpoint("dep_123").await.unwrap();
+
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.deployment_id, "dep_123");
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_checkpoint() {
+        let storage = InMemoryStorage::new();
+        let result = storage.get_checkpoint("nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_checkpoint() {
+        let storage = InMemoryStorage::new();
+        let checkpoint = DeploymentCheckpoint::new("dep_123");
+
+        storage.save_checkpoint(checkpoint).await.unwrap();
+
+        let deleted = storage.delete_checkpoint("dep_123").await.unwrap();
+        assert!(deleted);
+
+        let retrieved = storage.get_checkpoint("dep_123").await.unwrap();
+        assert!(retrieved.is_none());
+
+        // Deleting again should return false
+        let deleted_again = storage.delete_checkpoint("dep_123").await.unwrap();
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn test_list_active_checkpoints() {
+        use super::super::record::DeploymentPhase;
+
+        let storage = InMemoryStorage::new();
+
+        // Active checkpoint
+        let active = DeploymentCheckpoint::new("dep_active");
+        storage.save_checkpoint(active).await.unwrap();
+
+        // Completed checkpoint
+        let mut completed = DeploymentCheckpoint::new("dep_completed");
+        completed.set_phase(DeploymentPhase::Completed);
+        storage.save_checkpoint(completed).await.unwrap();
+
+        let active_list = storage.list_active_checkpoints().await.unwrap();
+        assert_eq!(active_list.len(), 1);
+        assert_eq!(active_list[0].deployment_id, "dep_active");
+    }
+
+    #[tokio::test]
+    async fn test_update_checkpoint() {
+        use super::super::record::DeploymentPhase;
+
+        let storage = InMemoryStorage::new();
+        let mut checkpoint = DeploymentCheckpoint::new("dep_123");
+
+        storage.save_checkpoint(checkpoint.clone()).await.unwrap();
+
+        // Update the checkpoint
+        checkpoint.advance_phase();
+        storage.save_checkpoint(checkpoint).await.unwrap();
+
+        let retrieved = storage.get_checkpoint("dep_123").await.unwrap().unwrap();
+        assert_eq!(retrieved.phase, DeploymentPhase::InfrastructureProvisioning);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_checkpoints() {
+        let storage = InMemoryStorage::new();
+
+        storage
+            .save_checkpoint(DeploymentCheckpoint::new("dep_123"))
+            .await
+            .unwrap();
+
+        // Cleanup with 0 days should remove all checkpoints
+        let removed = storage.cleanup_checkpoints(0).await.unwrap();
+        assert_eq!(removed, 1);
+
+        let active = storage.list_active_checkpoints().await.unwrap();
+        assert!(active.is_empty());
     }
 }

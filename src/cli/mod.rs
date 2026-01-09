@@ -1,4 +1,7 @@
 mod commands;
+pub mod init;
+pub mod plugin_template;
+pub mod resume;
 
 pub use commands::Cli;
 pub use commands::Commands;
@@ -9,8 +12,11 @@ pub use commands::HooksRunArgs;
 pub use commands::InitArgs;
 pub use commands::LogsArgs;
 pub use commands::OutputFormat;
+pub use commands::PluginCommands;
+pub use commands::PluginNewArgs;
 pub use commands::ProjectsCommands;
 pub use commands::ProvisionArgs;
+pub use commands::ResumeArgs;
 pub use commands::RollbackArgs;
 pub use commands::StatusArgs;
 pub use commands::UiArgs;
